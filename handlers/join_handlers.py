@@ -3,10 +3,11 @@ import logging
 import random
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
-
+from telethon import TelegramClient
+from telethon.sessions import StringSession
+from config import API_ID, API_HASH
 from database import db
-from client_manager import client_manager
-from handlers.utils import join_target, get_stop_event, clear_stop_event, parse_timing
+from handlers.utils import join_target, get_stop_event, clear_stop_event, parse_timing, safe_disconnect
 
 logger = logging.getLogger(__name__)
 
@@ -120,14 +121,20 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
             failed_count += 1
             continue
         
+        client = None
         try:
-            logger.info(f"Joining account {i+1}/{count}: {phone}")
-            client = await client_manager.get_or_create_client(session_string, phone)
-            if not client:
-                results.append(f"❌ #{i+1} — {phone} failed to connect")
+            logger.info(f"Attempting to join {target} with account {i+1}/{count}: {phone}")
+            
+            # Create a fresh client for each account
+            client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+            await client.connect()
+            
+            if not await client.is_user_authorized():
+                results.append(f"❌ #{i+1} — {phone} session not authorized")
                 failed_count += 1
                 continue
-
+            
+            # Join the target
             ok, msg = await join_target(client, target)
             status = "✅" if ok else "❌"
             if ok:
@@ -138,13 +145,14 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 logger.warning(f"Failed: {phone} - {msg}")
             results.append(f"{status} #{i+1} — {phone} — {msg}")
             
-            await client_manager.disconnect_client(phone)
-            
         except Exception as e:
             failed_count += 1
             error_msg = str(e)[:100]
             logger.error(f"Error joining {phone}: {error_msg}")
             results.append(f"❌ #{i+1} — {phone} — Error: {error_msg}")
+        finally:
+            if client:
+                await safe_disconnect(client)
 
         # Update progress every 5 accounts or at the end
         if (i + 1) % 5 == 0 or i == count - 1:
