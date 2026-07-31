@@ -58,7 +58,6 @@ def parse_timing(timing_str):
 async def join_target(client, target):
     try:
         target = target.strip()
-        logger.info(f"join_target: {target}")
         if 't.me/joinchat/' in target or 't.me/+' in target:
             if '+' in target:
                 hash_part = target.split('+')[-1]
@@ -133,19 +132,20 @@ async def update_status(client, offline=False):
 
 async def set_last_seen_privacy(client, show_last_seen=True):
     """
-    Set the privacy for last seen status.
-    - show_last_seen=True: allow everyone to see last seen (default)
-    - show_last_seen=False: hide last seen from everyone (mode 3)
+    Show/hide last seen + online presence for everyone.
+    - True  -> everyone sees exact "last seen x time ago" / "online"
+    - False -> nobody sees it (shows "last seen recently")
     """
     try:
-        if show_last_seen:
-            rule = types.InputPrivacyValueAllowAll()
-        else:
-            rule = types.InputPrivacyValueDisallowAll()
-        await client(functions.account.SetPrivacyRequest(
-            key=types.InputPrivacyKeyStatusTimestamp(),
-            rules=[rule]
-        ))
+        rule = (types.InputPrivacyValueAllowAll() if show_last_seen
+                else types.InputPrivacyValueDisallowAll())
+        # Telegram couples these two keys: hiding last seen also hides your
+        # online presence, and unhiding last seen does NOT restore presence.
+        # Both must be set explicitly, in this order.
+        for key in (types.InputPrivacyKeyStatusTimestamp(),
+                    types.InputPrivacyKeyPresence()):
+            await client(functions.account.SetPrivacyRequest(
+                key=key, rules=[rule]))
         return True
     except Exception as e:
         logger.error(f"Set privacy error: {e}")
