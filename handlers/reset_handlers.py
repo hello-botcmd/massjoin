@@ -1,7 +1,8 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 from database import db
-from handlers.utils import get_fresh_client, set_normal_privacy, safe_disconnect
+from client_manager import client_manager
+from handlers.utils import unhide_last_seen
 import asyncio
 
 async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -17,21 +18,23 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success = 0
     failed = 0
     for acc in accounts:
+        account_id = str(acc.get("_id", acc.get("phone")))
+        session = acc.get("session_string")
         client = None
         try:
-            client = await get_fresh_client(acc.get("session_string"))
+            client = await client_manager.get_or_create_client(session, account_id)
             if client:
-                ok = await set_normal_privacy(client)  # allow contacts + offline
-                if ok:
-                    success += 1
-                else:
-                    failed += 1
-                await safe_disconnect(client)
+                # Unhide last seen
+                await unhide_last_seen(client)
+                # Set offline
+                await client(functions.account.UpdateStatusRequest(offline=True))
+                success += 1
+                await client_manager.disconnect_client(account_id)
             else:
                 failed += 1
         except Exception:
             failed += 1
-            await safe_disconnect(client)
+            await client_manager.disconnect_client(account_id)
         await asyncio.sleep(0.5)
 
     # Update database: remove mode and hidden flags
