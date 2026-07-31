@@ -8,7 +8,6 @@ from config import API_ID, API_HASH
 
 logger = logging.getLogger(__name__)
 
-# Stop events for users
 _stop_events = {}
 _online_tasks = {}
 
@@ -57,15 +56,9 @@ def parse_timing(timing_str):
         return None
 
 async def join_target(client, target):
-    """
-    Join a channel/group. Returns (success, message).
-    If already participant, returns (True, "Already a participant").
-    """
     try:
         target = target.strip()
         logger.info(f"join_target: {target}")
-
-        # Handle invite links
         if 't.me/joinchat/' in target or 't.me/+' in target:
             if '+' in target:
                 hash_part = target.split('+')[-1]
@@ -74,7 +67,6 @@ async def join_target(client, target):
             hash_part = hash_part.split('?')[0].split('/')[0]
             try:
                 await client(functions.messages.ImportChatInviteRequest(hash=hash_part))
-                logger.info(f"Joined via invite: {target}")
                 return True, "Joined via invite"
             except errors.rpcerrorlist.InviteHashInvalidError:
                 return False, "Invalid invite link"
@@ -84,8 +76,6 @@ async def join_target(client, target):
                 return True, "Already a participant"
             except Exception as e:
                 return False, f"Invite error: {str(e)[:50]}"
-
-        # Normalize username/link
         if 'https://t.me/' in target:
             target = target.split('https://t.me/')[-1]
         elif 't.me/' in target:
@@ -93,8 +83,6 @@ async def join_target(client, target):
         if target.startswith('@'):
             target = target[1:]
         target = target.split('/')[0]
-
-        # Get entity
         try:
             entity = await client.get_entity(target)
         except ValueError:
@@ -102,12 +90,8 @@ async def join_target(client, target):
                 entity = await client.get_entity(int(target))
             else:
                 raise
-
-        # Join
         await client(functions.channels.JoinChannelRequest(entity))
-        logger.info(f"Joined: {target}")
         return True, "Joined successfully"
-
     except errors.rpcerrorlist.UserAlreadyParticipantError:
         return True, "Already a participant"
     except errors.rpcerrorlist.ChannelInvalidError:
@@ -121,7 +105,6 @@ async def join_target(client, target):
         return False, f"Error: {str(e)[:100]}"
 
 async def get_fresh_client(session_string, timeout=10):
-    """Create a fresh client, connect, and return if authorized."""
     try:
         client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
         await asyncio.wait_for(client.connect(), timeout=timeout)
@@ -156,14 +139,11 @@ async def set_privacy(client, privacy_key, rules):
         return False
 
 async def reset_profile(client):
-    """Reset privacy to default (allow contacts) and set online."""
     try:
-        # Reset last seen privacy to default (allow contacts)
         await client(functions.account.SetPrivacyRequest(
             key=types.InputPrivacyKeyStatusTimestamp(),
             rules=[types.InputPrivacyValueAllowContacts()]
         ))
-        # Set online
         await client(functions.account.UpdateStatusRequest(offline=False))
         return True
     except Exception as e:
@@ -171,7 +151,6 @@ async def reset_profile(client):
         return False
 
 def parse_mode_counts(text):
-    """Parse '5,3,2' into tuple (5,3,2). Returns None if invalid."""
     parts = [p.strip() for p in text.split(',')]
     if len(parts) != 3:
         return None
@@ -181,7 +160,6 @@ def parse_mode_counts(text):
         return None
 
 def distribute_accounts(accounts, counts):
-    """Distribute accounts into modes based on counts."""
     c1, c2, c3 = counts
     shuffled = list(accounts)
     random.shuffle(shuffled)
