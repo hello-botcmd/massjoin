@@ -150,7 +150,33 @@ async def reset_profile(client):
     except Exception as e:
         logger.error(f"Reset profile error: {e}")
         return False
+# Add to handlers/utils.py
 
+async def set_normal_privacy(client):
+    """Set privacy to allow contacts (default) and set offline."""
+    try:
+        await client(functions.account.SetPrivacyRequest(
+            key=types.InputPrivacyKeyStatusTimestamp(),
+            rules=[types.InputPrivacyValueAllowContacts()]
+        ))
+        await client(functions.account.UpdateStatusRequest(offline=True))
+        return True
+    except Exception as e:
+        logger.error(f"Set normal privacy error: {e}")
+        return False
+
+async def unhide_last_seen(client):
+    """Unhide last seen (allow contacts)."""
+    try:
+        await client(functions.account.SetPrivacyRequest(
+            key=types.InputPrivacyKeyStatusTimestamp(),
+            rules=[types.InputPrivacyValueAllowContacts()]
+        ))
+        return True
+    except Exception as e:
+        logger.error(f"Unhide last seen error: {e}")
+        return False
+        
 async def set_normal_privacy(client):
     """Set privacy to allow contacts (default) and set offline."""
     try:
