@@ -3,17 +3,17 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
+from client_manager import client_manager
 from handlers.utils import (
-    get_fresh_client, safe_disconnect, update_status, set_privacy,
-    parse_mode_counts, distribute_accounts,
-    get_stop_event, clear_stop_event, reset_profile
+    unhide_last_seen, set_privacy, get_stop_event,
+    parse_mode_counts, distribute_accounts
 )
 from telethon import types, functions
 
 logger = logging.getLogger(__name__)
 
 WAIT_MODE_COUNTS = 1
-_online_tasks = {}
+_online_tasks = {}  # account_id -> asyncio.Task
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Operation cancelled.")
@@ -49,7 +49,7 @@ async def mode_counts_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return ConversationHandler.END
 
-    # Stop any existing mode tasks for these accounts
+    # Stop any existing mode tasks for ALL accounts (to avoid conflicts)
     for acc in accounts:
         await stop_account_mode(acc)
 
@@ -77,6 +77,7 @@ async def mode_counts_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 async def stop_account_mode(account):
+    """Stop any running online task and disconnect persistent client."""
     account_id = str(account.get("_id", account.get("phone")))
     task = _online_tasks.pop(account_id, None)
     if task:
@@ -85,12 +86,17 @@ async def stop_account_mode(account):
             await task
         except (asyncio.CancelledError, Exception):
             pass
-    # Also set offline
+    # Disconnect persistent client if exists
     try:
-        client = await get_fresh_client(account.get("session_string"))
+        await client_manager.disconnect_client(account_id)
+    except Exception:
+        pass
+    # Also set offline via fresh client as fallback
+    try:
+        client = await client_manager.get_or_create_client(account.get("session_string"), account_id)
         if client:
-            await update_status(client, offline=True)
-            await safe_disconnect(client)
+            await client(functions.account.UpdateStatusRequest(offline=True))
+            await client_manager.disconnect_client(account_id)
     except Exception:
         pass
     await db.update_account(account_id, {
@@ -102,19 +108,27 @@ async def stop_account_mode(account):
 async def apply_mode_to_account(account, mode):
     account_id = str(account.get("_id", account.get("phone")))
     phone = account.get("phone", account_id)
+    session_string = account.get("session_string")
+
+    # Stop any previous mode
     await stop_account_mode(account)
 
     if mode in (1, 2):
-        client = await get_fresh_client(account.get("session_string"))
+        # Get persistent client
+        client = await client_manager.get_or_create_client(session_string, account_id)
         if not client:
             await db.update_account(account_id, {"status": "disconnected"})
             return f"❌ {phone}: session invalid"
+
+        # Unhide last seen if previously hidden
+        await unhide_last_seen(client)
+
+        # Set online
         try:
-            # Reset privacy to normal (unhide last seen) before going online
-            await reset_profile(client)  # sets online and allows contacts
+            await client(functions.account.UpdateStatusRequest(offline=False))
         except Exception as e:
-            await safe_disconnect(client)
             return f"❌ {phone}: {e}"
+
         await db.update_account(account_id, {
             "status": "active",
             "current_mode": mode,
@@ -123,28 +137,29 @@ async def apply_mode_to_account(account, mode):
             "is_hidden": False,
             "privacy": "normal"
         })
+
+        # Start online loop
         task = asyncio.create_task(_online_loop(account, mode))
         _online_tasks[account_id] = task
         label = "always online" if mode == 1 else "online 2 min"
-        await safe_disconnect(client)  # loop will reconnect
         return f"✅ {phone}: mode {mode} ({label})"
 
     elif mode == 3:
-        client = await get_fresh_client(account.get("session_string"))
+        # Hide last seen – use fresh client (no persistent needed)
+        client = await client_manager.get_or_create_client(session_string, account_id)
         if not client:
             await db.update_account(account_id, {"status": "disconnected"})
             return f"❌ {phone}: session invalid"
         try:
-            # Hide last seen from everyone
             await set_privacy(
                 client,
                 types.InputPrivacyKeyStatusTimestamp(),
                 [types.InputPrivacyValueDisallowAll()]
             )
-            await update_status(client, offline=False)  # online but hidden
-            await safe_disconnect(client)
+            await client(functions.account.UpdateStatusRequest(offline=False))
+            await client_manager.disconnect_client(account_id)
         except Exception as e:
-            await safe_disconnect(client)
+            await client_manager.disconnect_client(account_id)
             return f"❌ {phone}: {e}"
         await db.update_account(account_id, {
             "status": "active",
@@ -163,41 +178,49 @@ async def _online_loop(account, mode):
     phone = account.get("phone", account_id)
     try:
         while True:
+            # Check stop event for owner
             owner_uid = account.get("owner_uid")
             if owner_uid:
                 ev = get_stop_event(owner_uid)
                 if ev.is_set():
                     break
-            client = await get_fresh_client(account.get("session_string"))
+            # Get persistent client (should already exist)
+            client = await client_manager.get_client(account_id)
             if not client:
-                await asyncio.sleep(5)
-                continue
+                # Try to recreate
+                client = await client_manager.get_or_create_client(account.get("session_string"), account_id)
+                if not client:
+                    await asyncio.sleep(5)
+                    continue
             try:
-                await update_status(client, offline=False)
+                await client(functions.account.UpdateStatusRequest(offline=False))
                 if mode == 2:
+                    # Mode 2: online for 2 minutes, then offline
                     await asyncio.sleep(120)
-                    await update_status(client, offline=True)
-                    await safe_disconnect(client)
+                    await client(functions.account.UpdateStatusRequest(offline=True))
+                    await client_manager.disconnect_client(account_id)
                     break
                 else:
+                    # Mode 1: ping every 25 seconds
                     await asyncio.sleep(25)
             except Exception as e:
                 logger.warning(f"Online loop error {phone}: {e}")
                 await asyncio.sleep(5)
-            finally:
-                await safe_disconnect(client)
+                # Client may be dead; it will be recreated on next iteration
     except asyncio.CancelledError:
         pass
     except Exception as e:
         logger.error(f"Online loop fatal {phone}: {e}")
     finally:
+        # Cleanup
         await db.update_account(account_id, {
             "online_task_running": False,
             "in_use": False
         })
         if mode == 2:
-            client = await get_fresh_client(account.get("session_string"))
-            if client:
-                await update_status(client, offline=True)
-                await safe_disconnect(client)
+            # Ensure offline
+            try:
+                await client_manager.disconnect_client(account_id)
+            except Exception:
+                pass
         _online_tasks.pop(account_id, None)
