@@ -1,11 +1,10 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 from database import db
-from handlers.utils import get_fresh_client, reset_profile, safe_disconnect
+from handlers.utils import get_fresh_client, set_normal_privacy, safe_disconnect
 import asyncio
 
 async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reset all accounts to normal state: show last seen, no hidden mode."""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("🔄 Resetting all profiles to normal state...")
@@ -22,7 +21,7 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             client = await get_fresh_client(acc.get("session_string"))
             if client:
-                ok = await reset_profile(client)
+                ok = await set_normal_privacy(client)  # allow contacts + offline
                 if ok:
                     success += 1
                 else:
@@ -33,7 +32,7 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             failed += 1
             await safe_disconnect(client)
-        await asyncio.sleep(0.5)  # avoid flood
+        await asyncio.sleep(0.5)
 
     # Update database: remove mode and hidden flags
     await db.update_many_accounts({}, {
@@ -49,6 +48,6 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ **Reset Complete**\n\n"
         f"✅ Success: {success}\n"
         f"❌ Failed: {failed}\n"
-        f"All accounts now show last seen normally.",
+        f"All accounts now show last seen normally and are offline.",
         parse_mode="Markdown"
     )
