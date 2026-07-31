@@ -9,7 +9,7 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-from config import BOT_TOKEN, ALLOWED_USERS, OWNER_ID
+from config import BOT_TOKEN, ALLOWED_USERS
 from database import db
 from handlers import (
     account_handlers,
@@ -237,11 +237,12 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stop", stop_command))
     application.add_handler(CommandHandler("remove", remove_command))
+    application.add_handler(CommandHandler("cancel", account_handlers.cancel_conversation))
     
     # Add callback handler
     application.add_handler(CallbackQueryHandler(handle_callback))
     
-    # Account handlers - Use per_message=False to avoid warnings with mixed handlers
+    # Account handlers
     account_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(account_handlers.single_add_start, pattern="^single_add$"),
@@ -259,7 +260,6 @@ def main():
             ],
         },
         fallbacks=[
-            CommandHandler("stop", account_handlers.cancel_conversation),
             CommandHandler("cancel", account_handlers.cancel_conversation),
         ],
         per_message=False
@@ -281,7 +281,6 @@ def main():
             ],
         },
         fallbacks=[
-            CommandHandler("stop", join_handlers.cancel_conversation),
             CommandHandler("cancel", join_handlers.cancel_conversation),
         ],
         per_message=False
@@ -303,7 +302,6 @@ def main():
             ],
         },
         fallbacks=[
-            CommandHandler("stop", mode_handlers.cancel_conversation),
             CommandHandler("cancel", mode_handlers.cancel_conversation),
         ],
         per_message=False
@@ -325,7 +323,6 @@ def main():
             ],
         },
         fallbacks=[
-            CommandHandler("stop", reaction_handlers.cancel_conversation),
             CommandHandler("cancel", reaction_handlers.cancel_conversation),
         ],
         per_message=False
@@ -344,7 +341,6 @@ def main():
             ],
         },
         fallbacks=[
-            CommandHandler("stop", views_handlers.cancel_conversation),
             CommandHandler("cancel", views_handlers.cancel_conversation),
         ],
         per_message=False
