@@ -14,6 +14,7 @@ from handlers import (
     views_handlers, online_handlers, utils
 )
 import asyncio
+from telethon import functions
 
 warnings.filterwarnings("ignore", category=PTBUserWarning)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
