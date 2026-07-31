@@ -8,6 +8,13 @@ import random
 # Conversation states
 (JOIN_LINK, JOIN_COUNT, JOIN_TIMING, JOIN_CONFIRM) = range(4)
 
+async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel ongoing conversation"""
+    await update.message.reply_text(
+        "❌ Operation cancelled."
+    )
+    return ConversationHandler.END
+
 async def join_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle join button click"""
     query = update.callback_query
