@@ -131,63 +131,24 @@ async def update_status(client, offline=False):
     except Exception:
         return False
 
-async def set_privacy(client, privacy_key, rules):
+async def set_last_seen_privacy(client, show_last_seen=True):
+    """
+    Set the privacy for last seen status.
+    - show_last_seen=True: allow everyone to see last seen (default)
+    - show_last_seen=False: hide last seen from everyone (mode 3)
+    """
     try:
-        await client(functions.account.SetPrivacyRequest(key=privacy_key, rules=rules))
-        return True
-    except Exception:
-        return False
-
-async def reset_profile(client):
-    """Reset privacy to default (allow contacts) and set online."""
-    try:
+        if show_last_seen:
+            rule = types.InputPrivacyValueAllowAll()
+        else:
+            rule = types.InputPrivacyValueDisallowAll()
         await client(functions.account.SetPrivacyRequest(
             key=types.InputPrivacyKeyStatusTimestamp(),
-            rules=[types.InputPrivacyValueAllowContacts()]
-        ))
-        await client(functions.account.UpdateStatusRequest(offline=False))
-        return True
-    except Exception as e:
-        logger.error(f"Reset profile error: {e}")
-        return False
-# Add to handlers/utils.py
-
-async def set_normal_privacy(client):
-    """Set privacy to allow contacts (default) and set offline."""
-    try:
-        await client(functions.account.SetPrivacyRequest(
-            key=types.InputPrivacyKeyStatusTimestamp(),
-            rules=[types.InputPrivacyValueAllowContacts()]
-        ))
-        await client(functions.account.UpdateStatusRequest(offline=True))
-        return True
-    except Exception as e:
-        logger.error(f"Set normal privacy error: {e}")
-        return False
-
-async def unhide_last_seen(client):
-    """Unhide last seen (allow contacts)."""
-    try:
-        await client(functions.account.SetPrivacyRequest(
-            key=types.InputPrivacyKeyStatusTimestamp(),
-            rules=[types.InputPrivacyValueAllowContacts()]
+            rules=[rule]
         ))
         return True
     except Exception as e:
-        logger.error(f"Unhide last seen error: {e}")
-        return False
-        
-async def set_normal_privacy(client):
-    """Set privacy to allow contacts (default) and set offline."""
-    try:
-        await client(functions.account.SetPrivacyRequest(
-            key=types.InputPrivacyKeyStatusTimestamp(),
-            rules=[types.InputPrivacyValueAllowContacts()]
-        ))
-        await client(functions.account.UpdateStatusRequest(offline=True))
-        return True
-    except Exception as e:
-        logger.error(f"Set normal privacy error: {e}")
+        logger.error(f"Set privacy error: {e}")
         return False
 
 def parse_mode_counts(text):
@@ -211,32 +172,3 @@ def distribute_accounts(accounts, counts):
                 assignments.append((shuffled[idx], mode))
                 idx += 1
     return assignments
-# Add these functions to handlers/utils.py
-
-async def set_privacy_allow_all(client):
-    """Set last seen privacy to allow all (show last seen)."""
-    try:
-        await client(functions.account.SetPrivacyRequest(
-            key=types.InputPrivacyKeyStatusTimestamp(),
-            rules=[types.InputPrivacyValueAllowAll()]
-        ))
-        return True
-    except Exception as e:
-        logger.error(f"Set privacy allow all error: {e}")
-        return False
-
-async def set_privacy_disallow_all(client):
-    """Set last seen privacy to disallow all (hide last seen)."""
-    try:
-        await client(functions.account.SetPrivacyRequest(
-            key=types.InputPrivacyKeyStatusTimestamp(),
-            rules=[types.InputPrivacyValueDisallowAll()]
-        ))
-        return True
-    except Exception as e:
-        logger.error(f"Set privacy disallow all error: {e}")
-        return False
-
-async def unhide_last_seen(client):
-    """Unhide last seen (allow all)."""
-    return await set_privacy_allow_all(client)
