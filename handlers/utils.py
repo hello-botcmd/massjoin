@@ -1,7 +1,7 @@
 import re
 import asyncio
-import random
 import logging
+import random
 from telethon import TelegramClient, errors, functions, types
 from telethon.sessions import StringSession
 from config import API_ID, API_HASH
@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 # Stop events for users
 _stop_events = {}
+_online_tasks = {}
 
 def get_stop_event(user_id):
     if user_id not in _stop_events:
@@ -19,6 +20,16 @@ def get_stop_event(user_id):
 def clear_stop_event(user_id):
     if user_id in _stop_events:
         _stop_events[user_id].clear()
+
+def set_stop_event(user_id):
+    ev = _stop_events.get(user_id)
+    if ev:
+        ev.set()
+
+async def cancel_user_operations(user_id):
+    ev = _stop_events.get(user_id)
+    if ev:
+        ev.set()
 
 def parse_timing(timing_str):
     try:
@@ -47,16 +58,15 @@ def parse_timing(timing_str):
 
 async def join_target(client, target):
     """
-    Join a channel/group - handles public, private, and invite links.
-    Returns (success, message)
+    Join a channel/group. Returns (success, message).
+    If already participant, returns (True, "Already a participant").
     """
     try:
         target = target.strip()
-        logger.info(f"join_target called with: {target}")
-        
-        # Handle invite links (private groups/channels)
+        logger.info(f"join_target: {target}")
+
+        # Handle invite links
         if 't.me/joinchat/' in target or 't.me/+' in target:
-            # Extract hash
             if '+' in target:
                 hash_part = target.split('+')[-1]
             else:
@@ -64,16 +74,18 @@ async def join_target(client, target):
             hash_part = hash_part.split('?')[0].split('/')[0]
             try:
                 await client(functions.messages.ImportChatInviteRequest(hash=hash_part))
-                logger.info(f"Joined via invite link: {target}")
-                return True, "Joined via invite link"
+                logger.info(f"Joined via invite: {target}")
+                return True, "Joined via invite"
             except errors.rpcerrorlist.InviteHashInvalidError:
                 return False, "Invalid invite link"
             except errors.rpcerrorlist.InviteHashExpiredError:
                 return False, "Invite link expired"
+            except errors.rpcerrorlist.UserAlreadyParticipantError:
+                return True, "Already a participant"
             except Exception as e:
                 return False, f"Invite error: {str(e)[:50]}"
-        
-        # Clean up normal channel links
+
+        # Normalize username/link
         if 'https://t.me/' in target:
             target = target.split('https://t.me/')[-1]
         elif 't.me/' in target:
@@ -81,22 +93,21 @@ async def join_target(client, target):
         if target.startswith('@'):
             target = target[1:]
         target = target.split('/')[0]
-        
-        # Try to get entity
+
+        # Get entity
         try:
             entity = await client.get_entity(target)
         except ValueError:
-            # Try as numeric ID
             if target.lstrip('-').isdigit():
                 entity = await client.get_entity(int(target))
             else:
                 raise
-        
+
         # Join
         await client(functions.channels.JoinChannelRequest(entity))
         logger.info(f"Joined: {target}")
         return True, "Joined successfully"
-        
+
     except errors.rpcerrorlist.UserAlreadyParticipantError:
         return True, "Already a participant"
     except errors.rpcerrorlist.ChannelInvalidError:
@@ -109,39 +120,18 @@ async def join_target(client, target):
         logger.error(f"Join error: {e}")
         return False, f"Error: {str(e)[:100]}"
 
-async def login_account(session_string, phone=None):
-    client = None
+async def get_fresh_client(session_string, timeout=10):
+    """Create a fresh client, connect, and return if authorized."""
     try:
         client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
-        await client.connect()
-        if await client.is_user_authorized():
-            me = await client.get_me()
-            await client.disconnect()
-            return True, me
-        else:
-            await client.disconnect()
-            return False, None
-    except Exception:
-        if client:
-            try:
-                await client.disconnect()
-            except:
-                pass
-        return False, None
-
-async def get_client_for_account(account):
-    session_string = account.get("session_string")
-    if not session_string:
-        return None
-    try:
-        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
-        await client.connect()
+        await asyncio.wait_for(client.connect(), timeout=timeout)
         if await client.is_user_authorized():
             return client
         else:
             await client.disconnect()
             return None
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Fresh client error: {e}")
         return None
 
 async def safe_disconnect(client):
@@ -158,29 +148,48 @@ async def update_status(client, offline=False):
     except Exception:
         return False
 
-async def set_privacy(client, privacy_type, value):
+async def set_privacy(client, privacy_key, rules):
     try:
-        await client(functions.account.SetPrivacyRequest(
-            key=privacy_type,
-            rules=[value]
-        ))
+        await client(functions.account.SetPrivacyRequest(key=privacy_key, rules=rules))
         return True
     except Exception:
         return False
 
-async def random_delay(min_sec, max_sec):
-    if min_sec and max_sec and min_sec < max_sec:
-        delay = random.uniform(min_sec, max_sec)
-        await asyncio.sleep(delay)
-    elif min_sec:
-        await asyncio.sleep(min_sec)
+async def reset_profile(client):
+    """Reset privacy to default (allow contacts) and set online."""
+    try:
+        # Reset last seen privacy to default (allow contacts)
+        await client(functions.account.SetPrivacyRequest(
+            key=types.InputPrivacyKeyStatusTimestamp(),
+            rules=[types.InputPrivacyValueAllowContacts()]
+        ))
+        # Set online
+        await client(functions.account.UpdateStatusRequest(offline=False))
+        return True
+    except Exception as e:
+        logger.error(f"Reset profile error: {e}")
+        return False
 
-def validate_phone(phone):
-    pattern = r'^\+?[1-9]\d{1,14}$'
-    return re.match(pattern, phone) is not None
+def parse_mode_counts(text):
+    """Parse '5,3,2' into tuple (5,3,2). Returns None if invalid."""
+    parts = [p.strip() for p in text.split(',')]
+    if len(parts) != 3:
+        return None
+    try:
+        return tuple(int(p) for p in parts if p.isdigit())
+    except:
+        return None
 
-def format_account_info(account):
-    return f"ID: {account.get('id', 'Unknown')}\n" \
-           f"Username: @{account.get('username', 'Unknown')}\n" \
-           f"Status: {account.get('status', 'Unknown')}\n" \
-           f"Mode: {account.get('mode', 'normal')}"
+def distribute_accounts(accounts, counts):
+    """Distribute accounts into modes based on counts."""
+    c1, c2, c3 = counts
+    shuffled = list(accounts)
+    random.shuffle(shuffled)
+    assignments = []
+    idx = 0
+    for mode, cnt in enumerate([c1, c2, c3], start=1):
+        for _ in range(cnt):
+            if idx < len(shuffled):
+                assignments.append((shuffled[idx], mode))
+                idx += 1
+    return assignments
