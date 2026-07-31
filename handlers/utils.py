@@ -211,3 +211,32 @@ def distribute_accounts(accounts, counts):
                 assignments.append((shuffled[idx], mode))
                 idx += 1
     return assignments
+# Add these functions to handlers/utils.py
+
+async def set_privacy_allow_all(client):
+    """Set last seen privacy to allow all (show last seen)."""
+    try:
+        await client(functions.account.SetPrivacyRequest(
+            key=types.InputPrivacyKeyStatusTimestamp(),
+            rules=[types.InputPrivacyValueAllowAll()]
+        ))
+        return True
+    except Exception as e:
+        logger.error(f"Set privacy allow all error: {e}")
+        return False
+
+async def set_privacy_disallow_all(client):
+    """Set last seen privacy to disallow all (hide last seen)."""
+    try:
+        await client(functions.account.SetPrivacyRequest(
+            key=types.InputPrivacyKeyStatusTimestamp(),
+            rules=[types.InputPrivacyValueDisallowAll()]
+        ))
+        return True
+    except Exception as e:
+        logger.error(f"Set privacy disallow all error: {e}")
+        return False
+
+async def unhide_last_seen(client):
+    """Unhide last seen (allow all)."""
+    return await set_privacy_allow_all(client)
