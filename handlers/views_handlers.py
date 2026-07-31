@@ -4,6 +4,12 @@ from database import db
 from handlers.utils import get_client_for_account, safe_disconnect
 import asyncio
 import random
+async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel ongoing conversation"""
+    await update.message.reply_text(
+        "❌ Operation cancelled."
+    )
+    return ConversationHandler.END
 
 # Conversation states
 (VIEWS_LINK, VIEWS_COUNT) = range(2)
