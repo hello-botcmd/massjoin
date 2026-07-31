@@ -66,7 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle callback queries"""
+    """Handle callback queries - ONLY for main menu and non-conversation handlers"""
     query = update.callback_query
     data = query.data
     
@@ -100,14 +100,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle account menu
+    # Handle add account - goes to account handler
     if data == "add_account":
         await account_handlers.account_button(update, context)
         return
     
-    # Handle join - let conversation handler process
+    # Handle join - THIS SHOULD NOT BE HANDLED HERE
+    # The conversation handler will catch it
     if data == "join":
-        # The conversation handler will catch this
+        # Just acknowledge and let the conversation handler process
+        await query.answer()
         return
     
     # Handle mode
@@ -185,9 +187,9 @@ def main():
     # Add account conversation handler
     application.add_handler(account_handlers.get_add_account_handler())
     
-    # Add join conversation handler
+    # Add join conversation handler - using join_entry as entry point
     join_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(join_handlers.join_button, pattern="^join$")],
+        entry_points=[CallbackQueryHandler(join_handlers.join_entry, pattern="^join$")],
         states={
             join_handlers.WAIT_JOIN_LINK: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_link_handle)
