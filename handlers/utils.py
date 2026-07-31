@@ -1,9 +1,12 @@
 import re
 import asyncio
 import random
+import logging
 from telethon import TelegramClient, errors, functions, types
 from telethon.sessions import StringSession
 from config import API_ID, API_HASH
+
+logger = logging.getLogger(__name__)
 
 # Stop events for users
 _stop_events = {}
@@ -25,7 +28,6 @@ def parse_timing(timing_str):
         min_time = None
         max_time = None
         
-        # Try format: min-1s max-8s
         min_match = re.search(r'min-(\d+)([sm]?)', timing_str)
         if min_match:
             value = int(min_match.group(1))
@@ -38,7 +40,6 @@ def parse_timing(timing_str):
             unit = max_match.group(2)
             max_time = value if unit == 's' else value * 60
         
-        # Try simple format like "2 6"
         if min_time is None and max_time is None:
             parts = timing_str.split()
             if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
@@ -52,9 +53,35 @@ def parse_timing(timing_str):
         return None
 
 async def join_target(client, target):
-    """Join a channel/group"""
+    """
+    Join a channel/group - handles public, private, invite links, and channels by ID.
+    Returns (success, message)
+    """
     try:
-        # Clean up the target
+        target = target.strip()
+        logger.info(f"Attempting to join: {target}")
+        
+        # Handle invite links (private groups/channels)
+        if 't.me/joinchat/' in target or 't.me/+' in target or 't.me/joinchat' in target:
+            # Extract hash
+            if '+' in target:
+                hash_part = target.split('+')[-1]
+            else:
+                hash_part = target.split('joinchat/')[-1]
+            # Remove any trailing slashes or query params
+            hash_part = hash_part.split('?')[0].split('/')[0]
+            try:
+                await client(functions.messages.ImportChatInviteRequest(hash=hash_part))
+                logger.info(f"Joined via invite link: {target}")
+                return True, "Joined via invite link"
+            except errors.rpcerrorlist.InviteHashInvalidError:
+                return False, "Invalid invite link"
+            except errors.rpcerrorlist.InviteHashExpiredError:
+                return False, "Invite link expired"
+            except Exception as e:
+                return False, f"Invite error: {str(e)[:50]}"
+        
+        # Clean up normal username/channel links
         if 'https://t.me/' in target:
             target = target.split('https://t.me/')[-1]
         elif 't.me/' in target:
@@ -63,23 +90,37 @@ async def join_target(client, target):
         if target.startswith('@'):
             target = target[1:]
         
-        # Get the entity
-        entity = await client.get_entity(target)
+        # Remove any trailing slashes
+        target = target.split('/')[0]
         
-        # Join using the correct method
-        await client(functions.channels.JoinChannelRequest(entity))
-        return True, "Success"
+        # Get entity
+        try:
+            entity = await client.get_entity(target)
+        except ValueError as e:
+            # Maybe it's a numeric ID
+            if target.lstrip('-').isdigit():
+                entity = await client.get_entity(int(target))
+            else:
+                raise e
+        
+        # Join the channel/group
+        try:
+            await client(functions.channels.JoinChannelRequest(entity))
+            logger.info(f"Joined successfully: {target}")
+            return True, "Joined successfully"
+        except errors.rpcerrorlist.UserAlreadyParticipantError:
+            logger.info(f"Already a participant: {target}")
+            return True, "Already a participant"
             
     except errors.rpcerrorlist.ChannelInvalidError:
         return False, "Invalid channel or group"
     except errors.rpcerrorlist.ChannelPrivateError:
         return False, "Channel is private or doesn't exist"
-    except errors.rpcerrorlist.UserAlreadyParticipantError:
-        return True, "Already a participant"
     except errors.rpcerrorlist.FloodWaitError as e:
         return False, f"Rate limited. Wait {e.seconds}s"
     except Exception as e:
-        return False, str(e)[:100]
+        logger.error(f"Join error: {e}")
+        return False, f"Error: {str(e)[:100]}"
 
 async def login_account(session_string, phone=None):
     """Login to Telegram using session string"""
@@ -87,7 +128,6 @@ async def login_account(session_string, phone=None):
     try:
         client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
         await client.connect()
-        
         if await client.is_user_authorized():
             me = await client.get_me()
             await client.disconnect()
@@ -108,11 +148,9 @@ async def get_client_for_account(account):
     session_string = account.get("session_string")
     if not session_string:
         return None
-    
     try:
         client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
         await client.connect()
-        
         if await client.is_user_authorized():
             return client
         else:
