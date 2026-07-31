@@ -2,11 +2,19 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
 from handlers.utils import get_client_for_account, random_delay, safe_disconnect
+from telethon import functions, types
 import asyncio
 import random
 
 # Conversation states
 (REACTION_LINK, REACTION_COUNT, REACTION_TYPES) = range(3)
+
+async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel ongoing conversation"""
+    await update.message.reply_text(
+        "❌ Operation cancelled."
+    )
+    return ConversationHandler.END
 
 async def reaction_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle reaction button click"""
