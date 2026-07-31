@@ -23,11 +23,12 @@ class Database:
     
     async def create_indexes(self):
         try:
-            await self.accounts.create_index("_id", unique=True)  # _id is phone
+            # Don't create unique index on _id as it's already unique by default
             await self.accounts.create_index("session_string", unique=True)
             await self.accounts.create_index("username")
             await self.accounts.create_index("status")
             await self.accounts.create_index("mode")
+            await self.accounts.create_index("phone")
         except Exception as e:
             print(f"⚠️ Index creation warning: {e}")
     
