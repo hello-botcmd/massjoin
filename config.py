@@ -4,7 +4,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot Configuration
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN is required in .env file")
+
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
 
@@ -16,13 +19,13 @@ DB_NAME = os.getenv("DB_NAME", "telegram_bot")
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 
-# Session Configuration
-SESSION_FILE = "sessions/"
-
-# Timeouts
-LOGIN_TIMEOUT = 30
-JOIN_TIMEOUT = 60
-REACTION_TIMEOUT = 30
+if API_ID == 0 or not API_HASH:
+    raise ValueError("API_ID and API_HASH are required in .env file")
 
 # Allowed users (only owner and admins can use the bot)
 ALLOWED_USERS = [OWNER_ID] + ADMIN_IDS
+
+print(f"✅ Config loaded successfully!")
+print(f"👤 Owner ID: {OWNER_ID}")
+print(f"👥 Admin IDs: {ADMIN_IDS}")
+print(f"📊 Allowed users: {ALLOWED_USERS}")
