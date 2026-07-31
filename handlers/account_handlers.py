@@ -22,7 +22,14 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     phone = context.user_data.get("login_phone")
     if phone:
         await client_manager.cancel_pending_login(phone)
-    await update.message.reply_text("❌ Operation cancelled.")
+    
+    query = update.callback_query if update.callback_query else None
+    if query:
+        await query.answer()
+        await query.edit_message_text("❌ Operation cancelled.")
+    else:
+        await update.message.reply_text("❌ Operation cancelled.")
+    
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -450,6 +457,8 @@ def get_add_account_handler():
         },
         fallbacks=[
             CommandHandler("cancel", cancel_conversation),
+            CallbackQueryHandler(cancel_conversation, pattern="^cancel$"),
         ],
-        per_message=False
+        per_message=False,
+        name="add_account_conversation"
     )
