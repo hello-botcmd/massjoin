@@ -1,252 +1,252 @@
-import asyncio
-import logging
-import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
-from client_manager import client_manager
-from handlers.utils import parse_time_range, safe_disconnect
-from telethon import errors
-
-logger = logging.getLogger(__name__)
+from handlers.utils import get_client_for_account, update_status, set_privacy, safe_disconnect
+from telethon import functions, types
+import asyncio
+import random
 
 # Conversation states
-(JOIN_LINK, JOIN_COUNT, JOIN_TIMING) = range(3)
+(MODE_COUNT1, MODE_COUNT2, MODE_COUNT3) = range(3)
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel ongoing conversation"""
     await update.message.reply_text("❌ Operation cancelled.")
     return ConversationHandler.END
 
-async def join_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle join button click"""
+async def mode_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle mode button click"""
     query = update.callback_query
     await query.answer()
     
-    await query.edit_message_text(
-        "🔗 **Join Channel/Group**\n\n"
-        "Please send the **channel/group link or username**\n"
-        "Examples:\n"
-        "- `https://t.me/username`\n"
-        "- `https://t.me/+abc123`\n"
-        "- `@username`\n"
-        "- `username`\n\n"
-        "Send /cancel to cancel.",
-        parse_mode="Markdown"
-    )
-    return JOIN_LINK
-
-async def join_link_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process join link/username"""
-    target = update.message.text.strip()
-    
-    if target.lower() == '/cancel':
-        await update.message.reply_text("❌ Operation cancelled.")
-        return ConversationHandler.END
-    
-    context.user_data["join_target"] = target
-    
-    # Get active accounts
-    accounts = await db.get_active_accounts()
-    total_accounts = len(accounts)
+    total_accounts = await db.get_account_count({"status": "active"})
     
     if total_accounts == 0:
-        await update.message.reply_text(
+        await query.edit_message_text(
             "❌ No active accounts found. Please add accounts first."
         )
-        return ConversationHandler.END
+        return
     
-    await update.message.reply_text(
-        f"🔢 How many accounts should join? (1-{total_accounts})\n\n"
-        f"Send /cancel to cancel."
+    await query.edit_message_text(
+        f"📊 **Mode Distribution**\n\n"
+        f"👤 Total active accounts: {total_accounts}\n\n"
+        f"Please specify how many accounts should go to **Mode 1**\n"
+        f"(Accounts will remain online forever):\n\n"
+        f"Send /cancel to cancel.",
+        parse_mode="Markdown"
     )
-    return JOIN_COUNT
+    return MODE_COUNT1
 
-async def join_count_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process join count"""
+async def mode_count1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process mode 1 count"""
     text = update.message.text.strip()
     
     if text.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
     
-    if not text.isdigit() or int(text) < 1:
-        await update.message.reply_text("❌ Send a valid positive number.\n\nSend /cancel to cancel.")
-        return JOIN_COUNT
-    
-    count = int(text)
-    accounts = await db.get_active_accounts()
-    
-    if count > len(accounts):
+    try:
+        count1 = int(text)
+        total = await db.get_account_count({"status": "active"})
+        
+        if count1 < 0 or count1 > total:
+            await update.message.reply_text(
+                f"❌ Please send a number between 0 and {total}.\n\n"
+                f"Send /cancel to cancel."
+            )
+            return MODE_COUNT1
+        
+        context.user_data['mode_count1'] = count1
+        
         await update.message.reply_text(
-            f"❌ Only {len(accounts)} active accounts available, but you requested {count}.\n\n"
-            f"Please send a number between 1 and {len(accounts)}."
+            f"📊 **Mode Distribution**\n\n"
+            f"Mode 1: {count1} accounts\n\n"
+            f"Please specify how many accounts should go to **Mode 2**\n"
+            f"(Accounts will be online for 2 minutes, then offline):\n\n"
+            f"Send /cancel to cancel.",
+            parse_mode="Markdown"
         )
-        return JOIN_COUNT
-    
-    context.user_data["join_count"] = count
-    
-    await update.message.reply_text(
-        "⏱️ **Timing Configuration**\n\n"
-        "Send timing *(e.g., `min-1s max-8s`)*:\n\n"
-        "Examples:\n"
-        "- `min-1s max-8s` (1-8 seconds delay)\n"
-        "- `min-2s max-5s` (2-5 seconds delay)\n\n"
-        "Send /cancel to cancel.",
-        parse_mode="Markdown"
-    )
-    return JOIN_TIMING
+        return MODE_COUNT2
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Please send a valid number.\n\n"
+            f"Send /cancel to cancel."
+        )
+        return MODE_COUNT1
 
-async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process join timing and start joining"""
-    timing_text = update.message.text.strip()
+async def mode_count2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process mode 2 count"""
+    text = update.message.text.strip()
     
-    if timing_text.lower() == '/cancel':
+    if text.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
     
-    min_time, max_time = parse_time_range(timing_text)
-    
-    if min_time is None or max_time is None or min_time > max_time:
+    try:
+        count2 = int(text)
+        total = await db.get_account_count({"status": "active"})
+        count1 = context.user_data.get('mode_count1', 0)
+        
+        if count2 < 0 or count1 + count2 > total:
+            await update.message.reply_text(
+                f"❌ Please send a number between 0 and {total - count1}.\n\n"
+                f"Send /cancel to cancel."
+            )
+            return MODE_COUNT2
+        
+        context.user_data['mode_count2'] = count2
+        
         await update.message.reply_text(
-            "❌ Invalid timing. Use e.g.: `min-1s max-8s`\n\n"
-            "Send /cancel to cancel.",
+            f"📊 **Mode Distribution**\n\n"
+            f"Mode 1: {count1}\n"
+            f"Mode 2: {count2}\n\n"
+            f"Please specify how many accounts should go to **Mode 3**\n"
+            f"(Accounts will hide their last seen):\n\n"
+            f"Send /cancel to cancel.",
             parse_mode="Markdown"
         )
-        return JOIN_TIMING
-    
-    target = context.user_data["join_target"]
-    count = context.user_data["join_count"]
-    accounts = await db.get_active_accounts()
-    
-    if len(accounts) < count:
+        return MODE_COUNT3
+    except ValueError:
         await update.message.reply_text(
-            f"❌ Only {len(accounts)} active, but {count} requested.",
+            "❌ Please send a valid number.\n\n"
+            f"Send /cancel to cancel."
         )
-        for k in ["join_target", "join_count"]:
-            context.user_data.pop(k, None)
+        return MODE_COUNT2
+
+async def mode_count3(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process mode 3 count and apply modes"""
+    text = update.message.text.strip()
+    
+    if text.lower() == '/cancel':
+        await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
     
-    selected = random.sample(accounts, count)
-    
-    status_msg = await update.message.reply_text(
-        f"⏳ Joining {target} with {count} accounts...\n"
-        f"Timing: `{min_time}s` – `{max_time}s` (alternating)\n"
-        f"Progress: 0/{count}",
-        parse_mode="Markdown",
-    )
-    
-    results = []
-    joined_count = 0
-    failed_count = 0
-    
-    for i, account in enumerate(selected):
-        client = None
-        try:
-            # Get client for this account
-            session_string = account.get("session_string")
-            if not session_string:
-                results.append(f"❌ #{i+1} — No session string")
-                failed_count += 1
-                continue
-            
-            # Create client
-            client = await client_manager.get_or_create_client(session_string, account.get("_id", "unknown"))
-            if not client:
-                results.append(f"❌ #{i+1} — Failed to connect")
-                failed_count += 1
-                continue
-            
-            # Join the target
-            success, error_msg = await join_target(client, target)
-            
-            if success:
-                joined_count += 1
-                results.append(f"✅ #{i+1} — Joined successfully")
-            else:
-                failed_count += 1
-                results.append(f"❌ #{i+1} — {error_msg}")
-            
-            await safe_disconnect(client)
-            
-        except Exception as e:
-            failed_count += 1
-            results.append(f"❌ #{i+1} — Error: {str(e)[:50]}")
-            await safe_disconnect(client)
-        
-        # Update progress every 5 accounts or at the end
-        if (i + 1) % 5 == 0 or i == count - 1:
-            try:
-                await status_msg.edit_text(
-                    f"⏳ Joining... ({i+1}/{count})\n"
-                    f"✅ Joined: {joined_count}\n"
-                    f"❌ Failed: {failed_count}\n\n"
-                    f"```\n" + "\n".join(results[-10:]) + "\n```",
-                    parse_mode="Markdown",
-                )
-            except Exception as e:
-                logger.error(f"Failed to update status: {e}")
-        
-        # Random delay between joins (alternating min/max)
-        if i < count - 1:
-            delay = min_time if i % 2 == 0 else max_time
-            await asyncio.sleep(delay)
-    
-    # Final result
-    summary = "\n".join(results)
-    final_message = (
-        f"🔗 **Join Results**\n\n"
-        f"📌 Target: {target}\n"
-        f"📊 Total: {count}\n"
-        f"✅ Joined: {joined_count}\n"
-        f"❌ Failed: {failed_count}\n\n"
-        f"```\n{summary[:3000]}\n```"
-    )
-    
-    await status_msg.edit_text(
-        final_message,
-        parse_mode="Markdown"
-    )
-    
-    # Clean up
-    for k in ["join_target", "join_count"]:
-        context.user_data.pop(k, None)
-    
-    return ConversationHandler.END
-
-async def join_target(client, target):
-    """Join a channel/group"""
     try:
-        # Clean up the target
-        if 'https://t.me/' in target:
-            target = target.split('https://t.me/')[-1]
-        elif 't.me/' in target:
-            target = target.split('t.me/')[-1]
+        count3 = int(text)
+        total = await db.get_account_count({"status": "active"})
+        count1 = context.user_data.get('mode_count1', 0)
+        count2 = context.user_data.get('mode_count2', 0)
         
-        if target.startswith('@'):
-            target = target[1:]
+        if count3 < 0 or count1 + count2 + count3 > total:
+            await update.message.reply_text(
+                f"❌ Please send a number between 0 and {total - count1 - count2}.\n\n"
+                f"Send /cancel to cancel."
+            )
+            return MODE_COUNT3
         
-        # Get the entity
-        entity = await client.get_entity(target)
+        # Get all active accounts
+        accounts = await db.get_active_accounts()
+        random.shuffle(accounts)
         
-        # Try to join
+        mode1_accounts = accounts[:count1]
+        mode2_accounts = accounts[count1:count1 + count2]
+        mode3_accounts = accounts[count1 + count2:count1 + count2 + count3]
+        
+        # Apply modes
+        status_msg = await update.message.reply_text(
+            f"🔄 Applying modes to {total} accounts...\n"
+            f"Mode 1: {len(mode1_accounts)}\n"
+            f"Mode 2: {len(mode2_accounts)}\n"
+            f"Mode 3: {len(mode3_accounts)}\n\n"
+            f"Starting..."
+        )
+        
+        # Apply mode 1 (always online)
+        for idx, account in enumerate(mode1_accounts):
+            await db.update_account(
+                account.get("_id"),
+                {"mode": "mode1", "privacy": "normal", "is_hidden": False}
+            )
+            # Start online monitor for this account
+            asyncio.create_task(mode1_monitor(account))
+            if (idx + 1) % 10 == 0:
+                await status_msg.edit_text(
+                    f"🔄 Applying Mode 1... {idx + 1}/{len(mode1_accounts)}"
+                )
+        
+        # Apply mode 2 (2 min online, then offline)
+        for idx, account in enumerate(mode2_accounts):
+            await db.update_account(
+                account.get("_id"),
+                {"mode": "mode2", "privacy": "normal", "is_hidden": False}
+            )
+            asyncio.create_task(mode2_monitor(account))
+            if (idx + 1) % 10 == 0:
+                await status_msg.edit_text(
+                    f"🔄 Applying Mode 2... {idx + 1}/{len(mode2_accounts)}"
+                )
+        
+        # Apply mode 3 (hide last seen)
+        for idx, account in enumerate(mode3_accounts):
+            await db.update_account(
+                account.get("_id"),
+                {"mode": "mode3", "privacy": "hidden", "is_hidden": True}
+            )
+            # Hide last seen
+            client = await get_client_for_account(account)
+            if client:
+                try:
+                    await set_privacy(
+                        client,
+                        types.InputPrivacyKeyStatusTimestamp(),
+                        types.InputPrivacyRuleDisallowAll()
+                    )
+                    await update_status(client, offline=False)
+                except Exception as e:
+                    print(f"Error hiding last seen: {e}")
+                await safe_disconnect(client)
+            if (idx + 1) % 10 == 0:
+                await status_msg.edit_text(
+                    f"🔄 Applying Mode 3... {idx + 1}/{len(mode3_accounts)}"
+                )
+        
+        await status_msg.edit_text(
+            f"✅ **Mode Distribution Complete!**\n\n"
+            f"📊 Mode 1: {len(mode1_accounts)} accounts (Always Online)\n"
+            f"📊 Mode 2: {len(mode2_accounts)} accounts (2 min Online)\n"
+            f"📊 Mode 3: {len(mode3_accounts)} accounts (Hidden Last Seen)"
+        )
+        
+        # Clean up
+        for key in ['mode_count1', 'mode_count2', 'mode_count3']:
+            context.user_data.pop(key, None)
+        
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Please send a valid number.\n\n"
+            f"Send /cancel to cancel."
+        )
+        return MODE_COUNT3
+
+async def mode1_monitor(account):
+    """Monitor mode 1 accounts - keep them online forever"""
+    phone = account.get("_id", "unknown")
+    while True:
         try:
-            await client.join_channel(entity)
-            return True, None
-        except AttributeError:
-            # Fallback for older Telethon versions
-            await client.join_group(entity)
-            return True, None
-            
-    except errors.rpcerrorlist.ChannelInvalidError:
-        return False, "Invalid channel or group"
-    except errors.rpcerrorlist.ChannelPrivateError:
-        return False, "Channel is private or doesn't exist"
-    except errors.rpcerrorlist.UserAlreadyParticipantError:
-        return False, "Already a participant"
-    except errors.rpcerrorlist.FloodWaitError as e:
-        return False, f"Rate limited. Wait {e.seconds}s"
-    except ValueError as e:
-        return False, f"Invalid target: {str(e)[:50]}"
+            client = await get_client_for_account(account)
+            if client:
+                await update_status(client, offline=False)
+                await safe_disconnect(client)
+            await asyncio.sleep(30)  # Check every 30 seconds
+        except Exception as e:
+            print(f"Mode 1 monitor error for {phone}: {e}")
+            await asyncio.sleep(10)
+
+async def mode2_monitor(account):
+    """Monitor mode 2 accounts - online for 2 minutes, then offline"""
+    phone = account.get("_id", "unknown")
+    client = None
+    try:
+        client = await get_client_for_account(account)
+        if client:
+            # Set online
+            await update_status(client, offline=False)
+            await asyncio.sleep(120)  # 2 minutes
+            # Set offline
+            await update_status(client, offline=True)
+            await db.update_account(phone, {"is_online": False})
     except Exception as e:
-        return False, str(e)[:100]
+        print(f"Mode 2 monitor error for {phone}: {e}")
+    finally:
+        await safe_disconnect(client)
