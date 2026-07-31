@@ -116,7 +116,6 @@ async def handle_session_string(update: Update, context: ContextTypes.DEFAULT_TY
     """Validate and add account via session string."""
     session_string = update.message.text.strip()
     
-    # Check for cancel
     if session_string.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
@@ -133,7 +132,6 @@ async def handle_session_string(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return SINGLE_SESSION
     
-    # Check if account exists
     existing = await db.get_account(phone)
     if existing:
         await status_msg.edit_text(
@@ -143,7 +141,6 @@ async def handle_session_string(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return SINGLE_SESSION
     
-    # Add account
     added = await db.add_account(phone, session_string)
     if added:
         await status_msg.edit_text(
@@ -165,7 +162,6 @@ async def handle_phone_number(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handle phone number input for login."""
     phone = update.message.text.strip()
     
-    # Check for cancel
     if phone.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
@@ -197,10 +193,6 @@ async def handle_phone_number(update: Update, context: ContextTypes.DEFAULT_TYPE
         await status_msg.edit_text(
             f"❌ Failed to send OTP.\n"
             f"Error: `{error_text}`\n\n"
-            f"Possible causes:\n"
-            f"• Check API_ID and API_HASH in config.py\n"
-            f"• Phone number format should be +1234567890\n"
-            f"• The phone might not have a Telegram account\n\n"
             f"Try again or send /cancel to cancel.",
             parse_mode="Markdown"
         )
@@ -213,10 +205,9 @@ async def handle_otp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = context.user_data.get("login_phone")
     
     if not phone:
-        await update.message.reply_text("❌ Login session expired. Please start over.\n\nSend /cancel to cancel.")
+        await update.message.reply_text("❌ Login session expired. Please start over.")
         return ConversationHandler.END
     
-    # Check for cancel
     if code.lower() == '/cancel':
         await client_manager.cancel_pending_login(phone)
         await update.message.reply_text("❌ Operation cancelled.")
@@ -227,7 +218,6 @@ async def handle_otp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success, result, error = await client_manager.submit_otp(phone, code)
     
     if success:
-        # result is the session_string
         added = await db.add_account(phone, result)
         if added:
             await status_msg.edit_text(
@@ -238,8 +228,7 @@ async def handle_otp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await status_msg.edit_text(
-                f"⚠️ Account {phone} already existed, but login successful.\n\n"
-                f"Use /start for main menu.",
+                f"⚠️ Account {phone} already existed, but login successful.",
                 parse_mode="Markdown"
             )
         context.user_data.clear()
@@ -268,10 +257,9 @@ async def handle_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = context.user_data.get("login_phone")
     
     if not phone:
-        await update.message.reply_text("❌ Login session expired. Start over.\n\nSend /cancel.")
+        await update.message.reply_text("❌ Login session expired. Start over.")
         return ConversationHandler.END
     
-    # Check for cancel
     if password.lower() == '/cancel':
         await client_manager.cancel_pending_login(phone)
         await update.message.reply_text("❌ Operation cancelled.")
@@ -292,8 +280,7 @@ async def handle_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await status_msg.edit_text(
-                f"⚠️ Account {phone} already existed, but login successful.\n\n"
-                f"Use /start for main menu.",
+                f"⚠️ Account {phone} already existed, but login successful.",
                 parse_mode="Markdown"
             )
         context.user_data.clear()
@@ -324,7 +311,6 @@ async def handle_bulk_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle bulk count input."""
     text = update.message.text.strip()
     
-    # Check for cancel
     if text.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
@@ -364,7 +350,6 @@ async def handle_bulk_session(update: Update, context: ContextTypes.DEFAULT_TYPE
     index = context.user_data.get("bulk_index", 0) + 1
     total = context.user_data.get("bulk_total", 0)
     
-    # Check for cancel
     if session_string.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
@@ -382,7 +367,6 @@ async def handle_bulk_session(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return BULK_SESSION
     
-    # Check if account exists
     existing = await db.get_account(phone)
     if existing:
         await status_msg.edit_text(
@@ -393,7 +377,6 @@ async def handle_bulk_session(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["bulk_index"] = index
         return BULK_SESSION
     
-    # Add account
     added = await db.add_account(phone, session_string)
     if added:
         bulk_list = context.user_data.get("bulk_list", [])
@@ -457,8 +440,6 @@ def get_add_account_handler():
         },
         fallbacks=[
             CommandHandler("cancel", cancel_conversation),
-            CallbackQueryHandler(cancel_conversation, pattern="^cancel$"),
         ],
-        per_message=False,
-        name="add_account_conversation"
+        per_message=False
     )
