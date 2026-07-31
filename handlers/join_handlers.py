@@ -2,7 +2,7 @@ import asyncio
 import logging
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import ContextTypes, ConversationHandler
 from database import db
 from client_manager import client_manager
 from telethon import errors
@@ -31,8 +31,8 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("❌ Operation cancelled.")
     return ConversationHandler.END
 
-async def join_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle join button click"""
+async def join_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point for join - handles the callback query"""
     query = update.callback_query
     await query.answer()
     
@@ -50,10 +50,27 @@ async def join_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def join_link_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process join link/username"""
-    context.user_data["join_target"] = update.message.text.strip()
+    target = update.message.text.strip()
+    
+    if target.lower() == '/cancel':
+        await update.message.reply_text("❌ Operation cancelled.")
+        return ConversationHandler.END
+    
+    context.user_data["join_target"] = target
+    
+    # Get active accounts
+    accounts = await db.get_active_accounts()
+    total_accounts = len(accounts)
+    
+    if total_accounts == 0:
+        await update.message.reply_text(
+            "❌ No active accounts found. Please add accounts first."
+        )
+        return ConversationHandler.END
+    
     await update.message.reply_text(
-        "🔢 How many accounts should join?\n\n"
-        "Send /cancel to cancel."
+        f"🔢 How many accounts should join? (1-{total_accounts})\n\n"
+        f"Send /cancel to cancel."
     )
     return WAIT_JOIN_COUNT
 
@@ -69,7 +86,18 @@ async def join_count_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Send a valid positive number.\n\nSend /cancel to cancel.")
         return WAIT_JOIN_COUNT
     
-    context.user_data["join_count"] = int(text)
+    count = int(text)
+    accounts = await db.get_active_accounts()
+    
+    if count > len(accounts):
+        await update.message.reply_text(
+            f"❌ Only {len(accounts)} active accounts available, but you requested {count}.\n\n"
+            f"Please send a number between 1 and {len(accounts)}."
+        )
+        return WAIT_JOIN_COUNT
+    
+    context.user_data["join_count"] = count
+    
     await update.message.reply_text(
         "⏱️ Send timing *(e.g., `min-1s max-8s` or `2 6`)*:\n\n"
         "Send /cancel to cancel.",
