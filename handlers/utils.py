@@ -139,6 +139,7 @@ async def set_privacy(client, privacy_key, rules):
         return False
 
 async def reset_profile(client):
+    """Reset privacy to default (allow contacts) and set online."""
     try:
         await client(functions.account.SetPrivacyRequest(
             key=types.InputPrivacyKeyStatusTimestamp(),
@@ -148,6 +149,19 @@ async def reset_profile(client):
         return True
     except Exception as e:
         logger.error(f"Reset profile error: {e}")
+        return False
+
+async def set_normal_privacy(client):
+    """Set privacy to allow contacts (default) and set offline."""
+    try:
+        await client(functions.account.SetPrivacyRequest(
+            key=types.InputPrivacyKeyStatusTimestamp(),
+            rules=[types.InputPrivacyValueAllowContacts()]
+        ))
+        await client(functions.account.UpdateStatusRequest(offline=True))
+        return True
+    except Exception as e:
+        logger.error(f"Set normal privacy error: {e}")
         return False
 
 def parse_mode_counts(text):
