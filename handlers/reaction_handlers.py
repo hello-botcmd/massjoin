@@ -1,7 +1,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
-from handlers.utils import get_client_for_account, random_delay, safe_disconnect
+from handlers.utils import get_client_for_account, safe_disconnect
 from telethon import functions, types
 import asyncio
 import random
@@ -11,9 +11,7 @@ import random
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel ongoing conversation"""
-    await update.message.reply_text(
-        "❌ Operation cancelled."
-    )
+    await update.message.reply_text("❌ Operation cancelled.")
     return ConversationHandler.END
 
 async def reaction_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -24,7 +22,8 @@ async def reaction_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         "🎯 **Reaction Configuration**\n\n"
         "Please send the **post link** to add reactions to.\n"
-        "Format: `https://t.me/username/post_id`",
+        "Format: `https://t.me/username/post_id`\n\n"
+        "Send /cancel to cancel.",
         parse_mode="Markdown"
     )
     return REACTION_LINK
@@ -32,15 +31,18 @@ async def reaction_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reaction_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process reaction link"""
     link = update.message.text.strip()
+    
+    if link.lower() == '/cancel':
+        await update.message.reply_text("❌ Operation cancelled.")
+        return ConversationHandler.END
+    
     context.user_data['reaction_link'] = link
     
     accounts = await db.get_active_accounts()
     total = len(accounts)
     
     if total == 0:
-        await update.message.reply_text(
-            "❌ No active accounts found."
-        )
+        await update.message.reply_text("❌ No active accounts found.")
         return ConversationHandler.END
     
     await update.message.reply_text(
@@ -48,20 +50,28 @@ async def reaction_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 Target: {link}\n"
         f"👤 Available accounts: {total}\n\n"
         f"How many reactions should be added?\n"
-        f"Please send a number (1-{total}):",
+        f"Please send a number (1-{total}):\n\n"
+        f"Send /cancel to cancel.",
         parse_mode="Markdown"
     )
     return REACTION_COUNT
 
 async def reaction_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process reaction count"""
+    text = update.message.text.strip()
+    
+    if text.lower() == '/cancel':
+        await update.message.reply_text("❌ Operation cancelled.")
+        return ConversationHandler.END
+    
     try:
-        count = int(update.message.text.strip())
+        count = int(text)
         accounts = await db.get_active_accounts()
         
         if count < 1 or count > len(accounts):
             await update.message.reply_text(
-                f"❌ Please send a number between 1 and {len(accounts)}."
+                f"❌ Please send a number between 1 and {len(accounts)}.\n\n"
+                f"Send /cancel to cancel."
             )
             return REACTION_COUNT
         
@@ -74,23 +84,32 @@ async def reaction_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Examples:\n"
             f"- `❤️`\n"
             f"- `❤️ 🥰`\n"
-            f"- `❤️ 🥰 😍`",
+            f"- `❤️ 🥰 😍`\n\n"
+            f"Send /cancel to cancel.",
             parse_mode="Markdown"
         )
         return REACTION_TYPES
     except ValueError:
         await update.message.reply_text(
-            "❌ Please send a valid number."
+            "❌ Please send a valid number.\n\n"
+            f"Send /cancel to cancel."
         )
         return REACTION_COUNT
 
 async def reaction_types(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process reaction types and start adding reactions"""
-    reactions = update.message.text.strip().split()
+    text = update.message.text.strip()
+    
+    if text.lower() == '/cancel':
+        await update.message.reply_text("❌ Operation cancelled.")
+        return ConversationHandler.END
+    
+    reactions = text.split()
     
     if not reactions:
         await update.message.reply_text(
-            "❌ Please send at least one reaction emoji."
+            "❌ Please send at least one reaction emoji.\n\n"
+            f"Send /cancel to cancel."
         )
         return REACTION_TYPES
     
@@ -128,29 +147,57 @@ async def start_reaction_process(update: Update, context: ContextTypes.DEFAULT_T
     for idx, account in enumerate(selected_accounts, 1):
         client = None
         try:
+            session_string = account.get("session_string")
+            if not session_string:
+                failed_count += 1
+                continue
+            
             client = await get_client_for_account(account)
             if client:
                 # Get the message entity
-                entity = await client.get_entity(link)
-                message_id = int(link.split('/')[-1])
-                
-                # Choose a random reaction for each account
-                reaction = random.choice(reactions)
-                
-                # Add reaction
-                await client(functions.messages.SendReactionRequest(
-                    peer=entity,
-                    msg_id=message_id,
-                    reaction=[types.ReactionEmoji(emoticon=reaction)]
-                ))
-                
-                success_count += 1
-                await status_msg.edit_text(
-                    f"✅ Added {reaction}\n"
-                    f"Progress: {idx}/{len(selected_accounts)}\n"
-                    f"✅ Success: {success_count}\n"
-                    f"❌ Failed: {failed_count}"
-                )
+                try:
+                    # Extract channel username and message ID from link
+                    if 'https://t.me/' in link:
+                        parts = link.split('https://t.me/')[-1].split('/')
+                        channel = parts[0]
+                        message_id = int(parts[1]) if len(parts) > 1 else None
+                    else:
+                        # Assume it's just a username/message_id format
+                        parts = link.split('/')
+                        channel = parts[0]
+                        message_id = int(parts[1]) if len(parts) > 1 else None
+                    
+                    if not message_id:
+                        failed_count += 1
+                        continue
+                    
+                    entity = await client.get_entity(channel)
+                    
+                    # Choose a random reaction for each account
+                    reaction = random.choice(reactions)
+                    
+                    # Add reaction
+                    await client(functions.messages.SendReactionRequest(
+                        peer=entity,
+                        msg_id=message_id,
+                        reaction=[types.ReactionEmoji(emoticon=reaction)]
+                    ))
+                    
+                    success_count += 1
+                    await status_msg.edit_text(
+                        f"✅ Added {reaction}\n"
+                        f"Progress: {idx}/{len(selected_accounts)}\n"
+                        f"✅ Success: {success_count}\n"
+                        f"❌ Failed: {failed_count}"
+                    )
+                except Exception as e:
+                    failed_count += 1
+                    await status_msg.edit_text(
+                        f"❌ Error: {str(e)[:50]}\n"
+                        f"Progress: {idx}/{len(selected_accounts)}\n"
+                        f"✅ Success: {success_count}\n"
+                        f"❌ Failed: {failed_count}"
+                    )
                 
                 await safe_disconnect(client)
             else:
@@ -171,3 +218,7 @@ async def start_reaction_process(update: Update, context: ContextTypes.DEFAULT_T
         f"❌ Failed: {failed_count}\n"
         f"🎯 Reactions: {' '.join(reactions)}"
     )
+    
+    # Clean up
+    for key in ['reaction_link', 'reaction_count', 'reaction_types']:
+        context.user_data.pop(key, None)
