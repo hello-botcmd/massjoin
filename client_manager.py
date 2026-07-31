@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from telethon import TelegramClient, functions, types
+from telethon import TelegramClient, functions, types, errors
 from telethon.sessions import StringSession
 from telethon.errors import (
     SessionPasswordNeededError,
