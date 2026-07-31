@@ -2,17 +2,19 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
 from handlers.utils import get_client_for_account, update_status, set_privacy, safe_disconnect
+from telethon import functions, types
 import asyncio
 import random
-from telethon import functions, types
+
+# Conversation states
+(MODE_COUNT1, MODE_COUNT2, MODE_COUNT3) = range(3)
+
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel ongoing conversation"""
     await update.message.reply_text(
         "❌ Operation cancelled."
     )
     return ConversationHandler.END
-# Conversation states
-(MODE_COUNT1, MODE_COUNT2, MODE_COUNT3) = range(3)
 
 async def mode_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle mode button click"""
