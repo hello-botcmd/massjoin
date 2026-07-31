@@ -2,7 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from database import db
 from client_manager import client_manager
-from handlers.utils import set_privacy_allow_all
+from handlers.utils import set_last_seen_privacy
 from telethon import functions
 import asyncio
 
@@ -25,8 +25,8 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             client = await client_manager.get_or_create_client(session, account_id)
             if client:
-                # Unhide last seen (allow all)
-                await set_privacy_allow_all(client)
+                # Show last seen to everyone
+                await set_last_seen_privacy(client, show_last_seen=True)
                 # Set offline
                 await client(functions.account.UpdateStatusRequest(offline=True))
                 success += 1
