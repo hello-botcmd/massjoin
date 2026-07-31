@@ -11,14 +11,24 @@ class Database:
     
     async def initialize(self):
         if self.client is None:
-            self.client = AsyncIOMotorClient(MONGODB_URI)
-            self.db = self.client[DB_NAME]
-            self.accounts = self.db.accounts
-            await self.create_indexes()
+            try:
+                self.client = AsyncIOMotorClient(MONGODB_URI)
+                self.db = self.client[DB_NAME]
+                self.accounts = self.db.accounts
+                await self.create_indexes()
+                print("✅ Database connected successfully!")
+            except Exception as e:
+                print(f"❌ Database connection error: {e}")
+                raise
     
     async def create_indexes(self):
-        await self.accounts.create_index("session_string", unique=True)
-        await self.accounts.create_index("username")
+        try:
+            await self.accounts.create_index("session_string", unique=True)
+            await self.accounts.create_index("username")
+            await self.accounts.create_index("status")
+            await self.accounts.create_index("mode")
+        except Exception as e:
+            print(f"⚠️ Index creation warning: {e}")
     
     async def add_account(self, account_data):
         async with self.lock:
