@@ -11,87 +11,63 @@ from handlers.utils import join_target, get_stop_event, clear_stop_event, parse_
 
 logger = logging.getLogger(__name__)
 
-# States
 WAIT_JOIN_LINK, WAIT_JOIN_COUNT, WAIT_JOIN_TIMING = range(3)
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel ongoing conversation"""
     await update.message.reply_text("❌ Operation cancelled.")
     return ConversationHandler.END
 
 async def join_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point for join"""
     query = update.callback_query
     await query.answer()
-    
     await query.edit_message_text(
         "🔗 Send the channel/group **username** or **invite link**:\n\n"
         "Examples:\n"
         "- `https://t.me/username`\n"
         "- `https://t.me/+abc123`\n"
-        "- `https://t.me/joinchat/abc123`\n"
-        "- `@username`\n"
-        "- `username`\n\n"
+        "- `@username`\n\n"
         "Send /cancel to cancel.",
         parse_mode="Markdown"
     )
     return WAIT_JOIN_LINK
 
 async def join_link_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle join link"""
     context.user_data["join_target"] = update.message.text.strip()
-    await update.message.reply_text(
-        "🔢 How many accounts should join?\n\nSend /cancel to cancel."
-    )
+    await update.message.reply_text("🔢 How many accounts should join?\n\nSend /cancel to cancel.")
     return WAIT_JOIN_COUNT
 
 async def join_count_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle join count"""
     text = update.message.text.strip()
-    
     if text.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
-    
     if not text.isdigit() or int(text) < 1:
-        await update.message.reply_text("❌ Send a valid positive number.\n\nSend /cancel to cancel.")
+        await update.message.reply_text("❌ Send a valid positive number.")
         return WAIT_JOIN_COUNT
-    
     context.user_data["join_count"] = int(text)
     await update.message.reply_text(
-        "⏱️ Send timing *(e.g., `min-1s max-8s` or `2 6`)*:\n\n"
-        "Send /cancel to cancel.",
+        "⏱️ Send timing *(e.g., `min-1s max-8s` or `2 6`)*:\n\nSend /cancel to cancel.",
         parse_mode="Markdown"
     )
     return WAIT_JOIN_TIMING
 
 async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle join timing and execute"""
     uid = update.effective_user.id
     timing_text = update.message.text.strip()
-    
     if timing_text.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
-    
     timing = parse_timing(timing_text)
     if not timing:
-        await update.message.reply_text(
-            "❌ Invalid timing. Use e.g.: `min-1s max-8s`\n\n"
-            "Send /cancel to cancel.",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Invalid timing. Use e.g.: `min-1s max-8s`")
         return WAIT_JOIN_TIMING
 
     min_s, max_s = timing
     target = context.user_data["join_target"]
     count = context.user_data["join_count"]
     accounts = await db.get_active_accounts()
-
     if len(accounts) < count:
-        await update.message.reply_text(
-            f"❌ Only {len(accounts)} active, but {count} requested.",
-        )
+        await update.message.reply_text(f"❌ Only {len(accounts)} active, but {count} requested.")
         for k in ["join_target", "join_count"]:
             context.user_data.pop(k, None)
         return ConversationHandler.END
@@ -100,75 +76,65 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     status_msg = await update.message.reply_text(
         f"⏳ Joining {target} with {count} accounts...\n"
         f"Timing: `{min_s}s` – `{max_s}s` (alternating)",
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
     stop_ev = get_stop_event(uid)
     results = []
-    joined_count = 0
-    failed_count = 0
-    
+    joined = 0
+    failed = 0
+    already = 0
+
     for i, acc in enumerate(selected):
         if stop_ev.is_set():
             results.append(f"⏹️ #{i+1} — stopped by user")
             break
 
         phone = acc.get("_id", acc.get("phone", "unknown"))
-        session_string = acc.get("session_string")
-        
-        if not session_string:
-            results.append(f"❌ #{i+1} — {phone} no session string")
-            failed_count += 1
+        session = acc.get("session_string")
+        if not session:
+            results.append(f"❌ #{i+1} — {phone} no session")
+            failed += 1
             continue
-        
+
         client = None
         try:
-            logger.info(f"Attempting to join {target} with account {i+1}/{count}: {phone}")
-            
-            # Create a fresh client for each account
-            client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+            client = TelegramClient(StringSession(session), API_ID, API_HASH)
             await client.connect()
-            
             if not await client.is_user_authorized():
-                results.append(f"❌ #{i+1} — {phone} session not authorized")
-                failed_count += 1
+                results.append(f"❌ #{i+1} — {phone} session invalid")
+                failed += 1
                 continue
-            
-            # Join the target
-            ok, msg = await join_target(client, target)
-            status = "✅" if ok else "❌"
-            if ok:
-                joined_count += 1
-                logger.info(f"Success: {phone} joined {target}")
-            else:
-                failed_count += 1
-                logger.warning(f"Failed: {phone} - {msg}")
-            results.append(f"{status} #{i+1} — {phone} — {msg}")
-            
-        except Exception as e:
-            failed_count += 1
-            error_msg = str(e)[:100]
-            logger.error(f"Error joining {phone}: {error_msg}")
-            results.append(f"❌ #{i+1} — {phone} — Error: {error_msg}")
-        finally:
-            if client:
-                await safe_disconnect(client)
 
-        # Update progress every 5 accounts or at the end
-        if (i + 1) % 5 == 0 or i == count - 1:
-            try:
-                await status_msg.edit_text(
-                    f"⏳ Joining... ({i+1}/{count})\n"
-                    f"✅ Joined: {joined_count}\n"
-                    f"❌ Failed: {failed_count}\n\n"
-                    f"```\n" + "\n".join(results[-10:]) + "\n```",
-                    parse_mode="Markdown",
-                )
-            except Exception as e:
-                logger.error(f"Failed to update status: {e}")
+            ok, msg = await join_target(client, target)
+            if ok:
+                if "Already" in msg or "already" in msg:
+                    already += 1
+                else:
+                    joined += 1
+                results.append(f"✅ #{i+1} — {phone} — {msg}")
+            else:
+                failed += 1
+                results.append(f"❌ #{i+1} — {phone} — {msg}")
+
+        except Exception as e:
+            failed += 1
+            results.append(f"❌ #{i+1} — {phone} — Error: {str(e)[:50]}")
+        finally:
+            await safe_disconnect(client)
+
+        if (i+1) % 5 == 0 or i == count-1:
+            await status_msg.edit_text(
+                f"⏳ Joining... ({i+1}/{count})\n"
+                f"✅ Joined: {joined}\n"
+                f"⚠️ Already: {already}\n"
+                f"❌ Failed: {failed}\n\n"
+                f"```\n" + "\n".join(results[-10:]) + "\n```",
+                parse_mode="Markdown"
+            )
 
         delay = min_s if i % 2 == 0 else max_s
-        if i < count - 1 and not stop_ev.is_set():
+        if i < count-1 and not stop_ev.is_set():
             await asyncio.sleep(delay)
 
     clear_stop_event(uid)
@@ -177,8 +143,9 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"🔗 **Join Results**\n\n"
         f"📌 Target: {target}\n"
         f"📊 Total: {count}\n"
-        f"✅ Joined: {joined_count}\n"
-        f"❌ Failed: {failed_count}\n\n"
+        f"✅ Joined: {joined}\n"
+        f"⚠️ Already: {already}\n"
+        f"❌ Failed: {failed}\n\n"
         f"```\n{summary[:3000]}\n```",
         parse_mode="Markdown"
     )
