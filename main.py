@@ -1,4 +1,5 @@
 import logging
+import warnings
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -9,6 +10,7 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
+from telegram.warnings import PTBUserWarning
 from config import BOT_TOKEN, ALLOWED_USERS
 from database import db
 from handlers import (
@@ -23,6 +25,9 @@ from handlers import (
     utils
 )
 import asyncio
+
+# Suppress PTB warnings
+warnings.filterwarnings("ignore", category=PTBUserWarning)
 
 # Set up logging
 logging.basicConfig(
@@ -65,14 +70,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle callback queries - ONLY for main menu and non-conversation handlers"""
+async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle main menu navigation callbacks"""
     query = update.callback_query
     data = query.data
     
-    logger.info(f"Callback received: {data}")
-    
-    # Handle main menu
     if data == "main_menu":
         keyboard = [
             [
@@ -100,47 +102,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Handle add account - goes to account handler
+    # Route to specific handlers
     if data == "add_account":
         await account_handlers.account_button(update, context)
-        return
-    
-    # Handle join - THIS SHOULD NOT BE HANDLED HERE
-    # The conversation handler will catch it
-    if data == "join":
-        # Just acknowledge and let the conversation handler process
-        await query.answer()
-        return
-    
-    # Handle mode
-    if data == "mode":
-        await mode_handlers.mode_button(update, context)
-        return
-    
-    # Handle reset
-    if data == "reset":
-        await reset_handlers.reset_button(update, context)
-        return
-    
-    # Handle total
-    if data == "total":
+    elif data == "total":
         await total_handlers.total_button(update, context)
-        return
-    
-    # Handle reaction
-    if data == "reaction":
-        await reaction_handlers.reaction_button(update, context)
-        return
-    
-    # Handle views
-    if data == "views":
-        await views_handlers.views_button(update, context)
-        return
-    
-    # Handle online
-    if data == "online":
+    elif data == "online":
         await online_handlers.online_button(update, context)
-        return
+    elif data == "reset":
+        await reset_handlers.reset_button(update, context)
+    # Let conversation handlers handle join, mode, reaction, views
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /stop command"""
@@ -182,12 +153,11 @@ def main():
     # Add command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stop", stop_command))
-    application.add_handler(CommandHandler("cancel", account_handlers.cancel_conversation))
     
-    # Add account conversation handler
+    # Add conversation handlers FIRST
     application.add_handler(account_handlers.get_add_account_handler())
     
-    # Add join conversation handler - using join_entry as entry point
+    # Join conversation handler
     join_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(join_handlers.join_entry, pattern="^join$")],
         states={
@@ -201,15 +171,12 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_timing_handle)
             ],
         },
-        fallbacks=[
-            CommandHandler("cancel", join_handlers.cancel_conversation),
-        ],
-        per_message=True,
+        fallbacks=[CommandHandler("cancel", join_handlers.cancel_conversation)],
         name="join_conversation"
     )
     application.add_handler(join_conv)
     
-    # Add mode conversation handler
+    # Mode conversation handler
     mode_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(mode_handlers.mode_button, pattern="^mode$")],
         states={
@@ -224,12 +191,11 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", mode_handlers.cancel_conversation)],
-        per_message=True,
         name="mode_conversation"
     )
     application.add_handler(mode_conv)
     
-    # Add reaction conversation handler
+    # Reaction conversation handler
     reaction_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(reaction_handlers.reaction_button, pattern="^reaction$")],
         states={
@@ -244,12 +210,11 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", reaction_handlers.cancel_conversation)],
-        per_message=True,
         name="reaction_conversation"
     )
     application.add_handler(reaction_conv)
     
-    # Add views conversation handler
+    # Views conversation handler
     views_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(views_handlers.views_button, pattern="^views$")],
         states={
@@ -261,23 +226,22 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", views_handlers.cancel_conversation)],
-        per_message=True,
         name="views_conversation"
     )
     application.add_handler(views_conv)
     
-    # Add reset, total, online handlers
-    application.add_handler(CallbackQueryHandler(reset_handlers.reset_button, pattern="^reset$"))
-    application.add_handler(CallbackQueryHandler(total_handlers.total_button, pattern="^total$"))
-    application.add_handler(CallbackQueryHandler(online_handlers.online_button, pattern="^online$"))
-    
-    # Add the main callback handler LAST
-    application.add_handler(CallbackQueryHandler(handle_callback))
+    # Add menu callback handler - only for specific patterns
+    application.add_handler(
+        CallbackQueryHandler(
+            main_menu_callback,
+            pattern="^(main_menu|add_account|total|online|reset)$"
+        )
+    )
     
     application.add_error_handler(error_handler)
     
     logger.info("Bot started...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling(allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
     main()
