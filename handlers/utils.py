@@ -130,35 +130,72 @@ async def update_status(client, offline=False):
     except Exception:
         return False
 
+async def _set_privacy_key(client, key, rule, retries=2):
+    """Set one privacy key with FloodWait tolerance."""
+    for attempt in range(retries):
+        try:
+            return await client(functions.account.SetPrivacyRequest(key=key, rules=[rule]))
+        except errors.rpcerrorlist.FloodWaitError as e:
+            logger.warning(f"FloodWait {e.seconds}s on {type(key).__name__} "
+                           f"(attempt {attempt + 1}/{retries})")
+            await asyncio.sleep(min(e.seconds, 60) + 1)
+    return None
+
 async def set_last_seen_privacy(client, show_last_seen=True):
     """
     Show/hide last seen + online presence for everyone.
     - True  -> everyone sees exact "last seen x time ago" / "online"
-    - False -> nobody sees it (shows "last seen recently")
+    - False -> nobody sees it (they see "last seen recently")
+
+    Sets BOTH keys: Telegram couples presence with last-seen visibility,
+    and unhiding the timestamp does NOT restore presence by itself.
     """
     try:
+        if client and not client.is_connected():
+            await client.connect()
+
         rule = (types.InputPrivacyValueAllowAll() if show_last_seen
                 else types.InputPrivacyValueDisallowAll())
-        # Telegram couples these two keys: hiding last seen also hides your
-        # online presence, and unhiding last seen does NOT restore presence.
-        # Both must be set explicitly, in this order.
+
+        # Timestamp first, then presence — same rule for both.
         for key in (types.InputPrivacyKeyStatusTimestamp(),
                     types.InputPrivacyKeyPresence()):
-            await client(functions.account.SetPrivacyRequest(
-                key=key, rules=[rule]))
+            res = await _set_privacy_key(client, key, rule)
+            if res is None:
+                logger.error(f"Failed to set {type(key).__name__} "
+                             f"(show={show_last_seen})")
+                return False
         return True
     except Exception as e:
         logger.error(f"Set privacy error: {e}")
         return False
 
+async def verify_last_seen_visible(client, account_id):
+    """Optional sanity check after unhide. Returns True if visible."""
+    try:
+        res = await client(functions.account.GetPrivacyRequest(
+            types.InputPrivacyKeyStatusTimestamp()))
+        visible = any(isinstance(r, types.InputPrivacyValueAllowAll)
+                      for r in res.rules)
+        if not visible:
+            logger.warning(f"{account_id}: last seen still hidden after unhide!")
+        return visible
+    except Exception as e:
+        logger.warning(f"Verify privacy failed {account_id}: {e}")
+        return False
+
 def parse_mode_counts(text):
+    """Parse '5,3,2' into (5,3,2). Returns None if invalid."""
     parts = [p.strip() for p in text.split(',')]
     if len(parts) != 3:
         return None
     try:
-        return tuple(int(p) for p in parts if p.isdigit())
-    except:
+        counts = tuple(int(p) for p in parts)
+    except (ValueError, TypeError):
         return None
+    if any(c < 0 for c in counts):
+        return None
+    return counts
 
 def distribute_accounts(accounts, counts):
     c1, c2, c3 = counts
