@@ -113,19 +113,20 @@ async def apply_mode_to_account(account, mode):
     await stop_account_mode(account)
 
     if mode in (1, 2):
-        # Get persistent client
         client = await client_manager.get_or_create_client(session_string, account_id)
         if not client:
             await db.update_account(account_id, {"status": "disconnected"})
             return f"❌ {phone}: session invalid"
 
-        # Unhide last seen (allow everyone)
-        await set_last_seen_privacy(client, show_last_seen=True)
+        # Ensure last seen is visible (unhide)
+        if not await set_last_seen_privacy(client, show_last_seen=True):
+            await client_manager.disconnect_client(account_id)
+            return f"❌ {phone}: failed to unhide last seen"
 
-        # Set online
         try:
             await client(functions.account.UpdateStatusRequest(offline=False))
         except Exception as e:
+            await client_manager.disconnect_client(account_id)
             return f"❌ {phone}: {e}"
 
         await db.update_account(account_id, {
@@ -137,26 +138,24 @@ async def apply_mode_to_account(account, mode):
             "privacy": "normal"
         })
 
-        # Start online loop
         task = asyncio.create_task(_online_loop(account, mode))
         _online_tasks[account_id] = task
         label = "always online" if mode == 1 else "online 2 min"
         return f"✅ {phone}: mode {mode} ({label})"
 
     elif mode == 3:
-        # Hide last seen – use persistent client (but no loop)
         client = await client_manager.get_or_create_client(session_string, account_id)
         if not client:
             await db.update_account(account_id, {"status": "disconnected"})
             return f"❌ {phone}: session invalid"
-        try:
-            await set_last_seen_privacy(client, show_last_seen=False)
-            await client(functions.account.UpdateStatusRequest(offline=False))
-            # We keep client connected but no loop; we can disconnect after setting
+
+        if not await set_last_seen_privacy(client, show_last_seen=False):
             await client_manager.disconnect_client(account_id)
-        except Exception as e:
-            await client_manager.disconnect_client(account_id)
-            return f"❌ {phone}: {e}"
+            return f"❌ {phone}: failed to hide last seen"
+
+        await client(functions.account.UpdateStatusRequest(offline=False))
+        await client_manager.disconnect_client(account_id)
+
         await db.update_account(account_id, {
             "status": "active",
             "current_mode": 3,
@@ -181,7 +180,6 @@ async def _online_loop(account, mode):
                     break
             client = await client_manager.get_client(account_id)
             if not client:
-                # Try to reconnect
                 client = await client_manager.get_or_create_client(account.get("session_string"), account_id)
                 if not client:
                     await asyncio.sleep(5)
