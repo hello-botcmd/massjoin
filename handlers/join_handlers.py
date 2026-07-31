@@ -1,16 +1,30 @@
+import asyncio
+import logging
+import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler
+from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 from database import db
 from client_manager import client_manager
-import asyncio
-import random
-import logging
 from telethon import errors
 
 logger = logging.getLogger(__name__)
 
 # Conversation states
-JOIN_LINK, JOIN_COUNT, JOIN_TIMING = range(3)
+WAIT_JOIN_LINK, WAIT_JOIN_COUNT, WAIT_JOIN_TIMING = range(3)
+
+# Stop events for users
+stop_events = {}
+
+def get_stop_event(user_id):
+    """Get or create a stop event for a user"""
+    if user_id not in stop_events:
+        stop_events[user_id] = asyncio.Event()
+    return stop_events[user_id]
+
+def clear_stop_event(user_id):
+    """Clear the stop event for a user"""
+    if user_id in stop_events:
+        stop_events[user_id].clear()
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel ongoing conversation"""
@@ -23,8 +37,7 @@ async def join_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     await query.edit_message_text(
-        "🔗 **Join Channel/Group**\n\n"
-        "Please send the **channel/group link or username**\n"
+        "🔗 Send the channel/group **username** or **invite link**:\n\n"
         "Examples:\n"
         "- `https://t.me/username`\n"
         "- `https://t.me/+abc123`\n"
@@ -33,33 +46,16 @@ async def join_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Send /cancel to cancel.",
         parse_mode="Markdown"
     )
-    return JOIN_LINK
+    return WAIT_JOIN_LINK
 
 async def join_link_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process join link/username"""
-    target = update.message.text.strip()
-    
-    if target.lower() == '/cancel':
-        await update.message.reply_text("❌ Operation cancelled.")
-        return ConversationHandler.END
-    
-    context.user_data["join_target"] = target
-    
-    # Get active accounts
-    accounts = await db.get_active_accounts()
-    total_accounts = len(accounts)
-    
-    if total_accounts == 0:
-        await update.message.reply_text(
-            "❌ No active accounts found. Please add accounts first."
-        )
-        return ConversationHandler.END
-    
+    context.user_data["join_target"] = update.message.text.strip()
     await update.message.reply_text(
-        f"🔢 How many accounts should join? (1-{total_accounts})\n\n"
-        f"Send /cancel to cancel."
+        "🔢 How many accounts should join?\n\n"
+        "Send /cancel to cancel."
     )
-    return JOIN_COUNT
+    return WAIT_JOIN_COUNT
 
 async def join_count_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process join count"""
@@ -71,54 +67,39 @@ async def join_count_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not text.isdigit() or int(text) < 1:
         await update.message.reply_text("❌ Send a valid positive number.\n\nSend /cancel to cancel.")
-        return JOIN_COUNT
+        return WAIT_JOIN_COUNT
     
-    count = int(text)
-    accounts = await db.get_active_accounts()
-    
-    if count > len(accounts):
-        await update.message.reply_text(
-            f"❌ Only {len(accounts)} active accounts available, but you requested {count}.\n\n"
-            f"Please send a number between 1 and {len(accounts)}."
-        )
-        return JOIN_COUNT
-    
-    context.user_data["join_count"] = count
-    
+    context.user_data["join_count"] = int(text)
     await update.message.reply_text(
-        "⏱️ **Timing Configuration**\n\n"
-        "Send timing *(e.g., `min-1s max-8s`)*:\n\n"
-        "Examples:\n"
-        "- `min-1s max-8s` (1-8 seconds delay)\n"
-        "- `min-2s max-5s` (2-5 seconds delay)\n\n"
+        "⏱️ Send timing *(e.g., `min-1s max-8s` or `2 6`)*:\n\n"
         "Send /cancel to cancel.",
         parse_mode="Markdown"
     )
-    return JOIN_TIMING
+    return WAIT_JOIN_TIMING
 
 async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process join timing and start joining"""
+    uid = update.effective_user.id
     timing_text = update.message.text.strip()
     
     if timing_text.lower() == '/cancel':
         await update.message.reply_text("❌ Operation cancelled.")
         return ConversationHandler.END
     
-    # Parse timing
-    min_time, max_time = parse_timing(timing_text)
-    
-    if min_time is None or max_time is None or min_time > max_time:
+    timing = parse_timing(timing_text)
+    if not timing:
         await update.message.reply_text(
             "❌ Invalid timing. Use e.g.: `min-1s max-8s`\n\n"
             "Send /cancel to cancel.",
             parse_mode="Markdown"
         )
-        return JOIN_TIMING
-    
+        return WAIT_JOIN_TIMING
+
+    min_s, max_s = timing
     target = context.user_data["join_target"]
     count = context.user_data["join_count"]
     accounts = await db.get_active_accounts()
-    
+
     if len(accounts) < count:
         await update.message.reply_text(
             f"❌ Only {len(accounts)} active, but {count} requested.",
@@ -126,61 +107,61 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for k in ["join_target", "join_count"]:
             context.user_data.pop(k, None)
         return ConversationHandler.END
-    
+
     selected = random.sample(accounts, count)
-    
     status_msg = await update.message.reply_text(
         f"⏳ Joining {target} with {count} accounts...\n"
-        f"Timing: `{min_time}s` – `{max_time}s` (alternating)\n"
-        f"Progress: 0/{count}",
+        f"Timing: `{min_s}s` – `{max_s}s` (alternating)",
         parse_mode="Markdown",
     )
-    
+
+    stop_ev = get_stop_event(uid)
     results = []
     joined_count = 0
     failed_count = 0
     
-    for i, account in enumerate(selected):
+    for i, acc in enumerate(selected):
+        if stop_ev.is_set():
+            results.append(f"⏹️ #{i+1} — stopped by user")
+            break
+
         client = None
+        phone = acc.get("_id", acc.get("phone", "unknown"))
+        session_string = acc.get("session_string")
+        
+        if not session_string:
+            results.append(f"❌ #{i+1} — {phone} no session string")
+            failed_count += 1
+            continue
+        
         try:
-            # Get session string
-            session_string = account.get("session_string")
-            if not session_string:
-                results.append(f"❌ #{i+1} — No session string")
-                failed_count += 1
-                continue
-            
-            # Get phone/ID
-            phone = account.get("_id", account.get("phone", "unknown"))
-            
-            # Create client
+            # Get client
             client = await client_manager.get_or_create_client(session_string, phone)
             if not client:
-                results.append(f"❌ #{i+1} — Failed to connect")
+                results.append(f"❌ #{i+1} — {phone} failed to connect")
                 failed_count += 1
                 continue
-            
+
             # Join the target
-            success, error_msg = await join_target(client, target)
-            
-            if success:
+            ok, msg = await join_target(client, target)
+            status = "✅" if ok else "❌"
+            if ok:
                 joined_count += 1
-                results.append(f"✅ #{i+1} — Joined successfully")
             else:
                 failed_count += 1
-                results.append(f"❌ #{i+1} — {error_msg}")
+            results.append(f"{status} #{i+1} — {phone} — {msg}")
             
             await client_manager.disconnect_client(phone)
             
         except Exception as e:
             failed_count += 1
-            results.append(f"❌ #{i+1} — Error: {str(e)[:50]}")
+            results.append(f"❌ #{i+1} — {phone} — Error: {str(e)[:50]}")
             if client:
                 try:
                     await client.disconnect()
                 except:
                     pass
-        
+
         # Update progress every 5 accounts or at the end
         if (i + 1) % 5 == 0 or i == count - 1:
             try:
@@ -193,14 +174,15 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 )
             except Exception as e:
                 logger.error(f"Failed to update status: {e}")
-        
+
         # Random delay between joins (alternating min/max)
-        if i < count - 1:
-            delay = min_time if i % 2 == 0 else max_time
+        delay = min_s if i % 2 == 0 else max_s
+        if i < count - 1 and not stop_ev.is_set():
             await asyncio.sleep(delay)
-    
-    # Final result
+
+    clear_stop_event(uid)
     summary = "\n".join(results)
+    
     final_message = (
         f"🔗 **Join Results**\n\n"
         f"📌 Target: {target}\n"
@@ -214,11 +196,9 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         final_message,
         parse_mode="Markdown"
     )
-    
-    # Clean up
+
     for k in ["join_target", "join_count"]:
         context.user_data.pop(k, None)
-    
     return ConversationHandler.END
 
 async def join_target(client, target):
@@ -239,11 +219,11 @@ async def join_target(client, target):
         # Try to join
         try:
             await client.join_channel(entity)
-            return True, None
+            return True, "Success"
         except AttributeError:
             # Fallback for older Telethon versions
             await client.join_group(entity)
-            return True, None
+            return True, "Success"
             
     except errors.rpcerrorlist.ChannelInvalidError:
         return False, "Invalid channel or group"
@@ -259,20 +239,19 @@ async def join_target(client, target):
         return False, str(e)[:100]
 
 def parse_timing(timing_str):
-    """Parse timing string like 'min-1s max-8s'"""
+    """Parse timing string like 'min-1s max-8s' or '2 6'"""
     import re
     try:
         min_time = None
         max_time = None
         
-        # Extract min time
+        # Try format: min-1s max-8s
         min_match = re.search(r'min-(\d+)([sm]?)', timing_str)
         if min_match:
             value = int(min_match.group(1))
             unit = min_match.group(2)
             min_time = value if unit == 's' else value * 60
         
-        # Extract max time
         max_match = re.search(r'max-(\d+)([sm]?)', timing_str)
         if max_match:
             value = int(max_match.group(1))
@@ -286,6 +265,8 @@ def parse_timing(timing_str):
                 min_time = int(parts[0])
                 max_time = int(parts[1])
         
-        return min_time, max_time
+        if min_time is not None and max_time is not None and min_time <= max_time:
+            return (min_time, max_time)
+        return None
     except Exception:
-        return None, None
+        return None
