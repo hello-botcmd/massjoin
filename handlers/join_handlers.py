@@ -28,6 +28,7 @@ async def join_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Examples:\n"
         "- `https://t.me/username`\n"
         "- `https://t.me/+abc123`\n"
+        "- `https://t.me/joinchat/abc123`\n"
         "- `@username`\n"
         "- `username`\n\n"
         "Send /cancel to cancel.",
@@ -120,6 +121,7 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
             continue
         
         try:
+            logger.info(f"Joining account {i+1}/{count}: {phone}")
             client = await client_manager.get_or_create_client(session_string, phone)
             if not client:
                 results.append(f"❌ #{i+1} — {phone} failed to connect")
@@ -130,16 +132,21 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
             status = "✅" if ok else "❌"
             if ok:
                 joined_count += 1
+                logger.info(f"Success: {phone} joined {target}")
             else:
                 failed_count += 1
+                logger.warning(f"Failed: {phone} - {msg}")
             results.append(f"{status} #{i+1} — {phone} — {msg}")
             
             await client_manager.disconnect_client(phone)
             
         except Exception as e:
             failed_count += 1
-            results.append(f"❌ #{i+1} — {phone} — Error: {str(e)[:50]}")
+            error_msg = str(e)[:100]
+            logger.error(f"Error joining {phone}: {error_msg}")
+            results.append(f"❌ #{i+1} — {phone} — Error: {error_msg}")
 
+        # Update progress every 5 accounts or at the end
         if (i + 1) % 5 == 0 or i == count - 1:
             try:
                 await status_msg.edit_text(
@@ -149,8 +156,8 @@ async def join_timing_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     f"```\n" + "\n".join(results[-10:]) + "\n```",
                     parse_mode="Markdown",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Failed to update status: {e}")
 
         delay = min_s if i % 2 == 0 else max_s
         if i < count - 1 and not stop_ev.is_set():
