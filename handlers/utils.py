@@ -28,7 +28,7 @@ async def login_account(session_string, phone=None):
         return False, None
 
 async def join_channel(client, channel_username):
-    """Join a channel/group"""
+    """Join a channel/group using the correct Telethon method"""
     try:
         # Clean up the channel username/link
         if 'https://t.me/' in channel_username:
@@ -40,8 +40,18 @@ async def join_channel(client, channel_username):
         if channel_username.startswith('@'):
             channel_username = channel_username[1:]
         
+        # Get the entity
         entity = await client.get_entity(channel_username)
-        await client.join_channel(entity)
+        
+        # Join using the correct method
+        # For channels, use join_channel
+        # For groups, use join_group (which also works for channels)
+        try:
+            await client.join_channel(entity)
+        except AttributeError:
+            # If join_channel doesn't exist, try join_group
+            await client.join_group(entity)
+        
         return True, None
     except errors.rpcerrorlist.ChannelInvalidError:
         return False, "Invalid channel or group"
@@ -49,6 +59,8 @@ async def join_channel(client, channel_username):
         return False, "Channel is private or doesn't exist"
     except errors.rpcerrorlist.UserAlreadyParticipantError:
         return False, "Already a participant"
+    except errors.rpcerrorlist.FloodWaitError as e:
+        return False, f"Rate limited. Wait {e.seconds} seconds"
     except Exception as e:
         return False, str(e)
 
