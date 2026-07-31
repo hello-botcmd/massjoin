@@ -139,9 +139,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "online":
         await online_handlers.online_button(update, context)
         return
-    
-    # For conversation handlers, we need to let them process
-    # Don't do anything here - the conversation handler will catch these
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /stop command"""
@@ -185,7 +182,7 @@ def main():
     application.add_handler(CommandHandler("stop", stop_command))
     application.add_handler(CommandHandler("cancel", account_handlers.cancel_conversation))
     
-    # Add account conversation handler FIRST
+    # Add account conversation handler
     application.add_handler(account_handlers.get_add_account_handler())
     
     # Add join conversation handler
@@ -193,17 +190,17 @@ def main():
         entry_points=[CallbackQueryHandler(join_handlers.join_button, pattern="^join$")],
         states={
             join_handlers.JOIN_LINK: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_link)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_link_handle)
             ],
             join_handlers.JOIN_COUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_count)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_count_handle)
             ],
             join_handlers.JOIN_TIMING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_timing)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_timing_handle)
             ],
         },
         fallbacks=[CommandHandler("cancel", join_handlers.cancel_conversation)],
-        per_message=False
+        per_message=True
     )
     application.add_handler(join_conv)
     
@@ -222,7 +219,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", mode_handlers.cancel_conversation)],
-        per_message=False
+        per_message=True
     )
     application.add_handler(mode_conv)
     
@@ -241,7 +238,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", reaction_handlers.cancel_conversation)],
-        per_message=False
+        per_message=True
     )
     application.add_handler(reaction_conv)
     
@@ -257,7 +254,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", views_handlers.cancel_conversation)],
-        per_message=False
+        per_message=True
     )
     application.add_handler(views_conv)
     
@@ -266,7 +263,7 @@ def main():
     application.add_handler(CallbackQueryHandler(total_handlers.total_button, pattern="^total$"))
     application.add_handler(CallbackQueryHandler(online_handlers.online_button, pattern="^online$"))
     
-    # Add the main callback handler LAST so it doesn't intercept conversation handlers
+    # Add the main callback handler LAST
     application.add_handler(CallbackQueryHandler(handle_callback))
     
     application.add_error_handler(error_handler)
