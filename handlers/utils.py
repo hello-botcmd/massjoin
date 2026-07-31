@@ -1,13 +1,13 @@
 from telethon import TelegramClient, errors, functions, types
 from telethon.sessions import StringSession
-from config import API_ID, API_HASH, SESSION_FILE
+from config import API_ID, API_HASH
 import asyncio
 import random
-import time
-import os
+import re
 
 async def login_account(session_string, phone=None):
     """Login to Telegram using session string"""
+    client = None
     try:
         client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
         await client.connect()
@@ -20,27 +20,42 @@ async def login_account(session_string, phone=None):
             await client.disconnect()
             return False, None
     except Exception as e:
+        if client:
+            try:
+                await client.disconnect()
+            except:
+                pass
         return False, None
 
 async def join_channel(client, channel_username):
     """Join a channel/group"""
     try:
+        # Clean up the channel username/link
+        if 'https://t.me/' in channel_username:
+            channel_username = channel_username.split('https://t.me/')[-1]
+        elif 't.me/' in channel_username:
+            channel_username = channel_username.split('t.me/')[-1]
+        
+        # Remove @ if present
+        if channel_username.startswith('@'):
+            channel_username = channel_username[1:]
+        
         entity = await client.get_entity(channel_username)
         await client.join_channel(entity)
         return True, None
     except errors.rpcerrorlist.ChannelInvalidError:
-        return False, "Invalid channel"
+        return False, "Invalid channel or group"
     except errors.rpcerrorlist.ChannelPrivateError:
-        return False, "Channel is private"
+        return False, "Channel is private or doesn't exist"
     except errors.rpcerrorlist.UserAlreadyParticipantError:
         return False, "Already a participant"
     except Exception as e:
         return False, str(e)
 
-async def leave_channel(client, channel_username):
+async def leave_channel(client, chat_id):
     """Leave a channel/group"""
     try:
-        entity = await client.get_entity(channel_username)
+        entity = await client.get_entity(int(chat_id) if chat_id.isdigit() else chat_id)
         await client.leave_channel(entity)
         return True, None
     except Exception as e:
@@ -94,21 +109,22 @@ async def safe_disconnect(client):
 def parse_time_range(time_str):
     """Parse time range like min-1s max-8s"""
     try:
-        parts = time_str.split()
         min_time = None
         max_time = None
         
-        for part in parts:
-            if part.startswith('min-'):
-                value = part[4:].replace('s', '').replace('m', '')
-                min_time = int(value)
-                if 'm' in part[4:]:
-                    min_time *= 60
-            elif part.startswith('max-'):
-                value = part[4:].replace('s', '').replace('m', '')
-                max_time = int(value)
-                if 'm' in part[4:]:
-                    max_time *= 60
+        # Extract min time
+        min_match = re.search(r'min-(\d+)([sm]?)', time_str)
+        if min_match:
+            value = int(min_match.group(1))
+            unit = min_match.group(2)
+            min_time = value if unit == 's' else value * 60
+        
+        # Extract max time
+        max_match = re.search(r'max-(\d+)([sm]?)', time_str)
+        if max_match:
+            value = int(max_match.group(1))
+            unit = max_match.group(2)
+            max_time = value if unit == 's' else value * 60
         
         return min_time, max_time
     except Exception:
@@ -116,13 +132,14 @@ def parse_time_range(time_str):
 
 async def random_delay(min_sec, max_sec):
     """Generate random delay between min and max seconds"""
-    if min_sec and max_sec:
+    if min_sec and max_sec and min_sec < max_sec:
         delay = random.uniform(min_sec, max_sec)
         await asyncio.sleep(delay)
+    elif min_sec:
+        await asyncio.sleep(min_sec)
 
 def validate_phone(phone):
     """Validate phone number format"""
-    import re
     pattern = r'^\+?[1-9]\d{1,14}$'
     return re.match(pattern, phone) is not None
 
