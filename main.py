@@ -105,9 +105,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await account_handlers.account_button(update, context)
         return
     
-    # Handle join
+    # Handle join - let conversation handler process
     if data == "join":
-        await join_handlers.join_button(update, context)
+        # The conversation handler will catch this
         return
     
     # Handle mode
@@ -189,18 +189,21 @@ def main():
     join_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(join_handlers.join_button, pattern="^join$")],
         states={
-            join_handlers.JOIN_LINK: [
+            join_handlers.WAIT_JOIN_LINK: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_link_handle)
             ],
-            join_handlers.JOIN_COUNT: [
+            join_handlers.WAIT_JOIN_COUNT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_count_handle)
             ],
-            join_handlers.JOIN_TIMING: [
+            join_handlers.WAIT_JOIN_TIMING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, join_handlers.join_timing_handle)
             ],
         },
-        fallbacks=[CommandHandler("cancel", join_handlers.cancel_conversation)],
-        per_message=True
+        fallbacks=[
+            CommandHandler("cancel", join_handlers.cancel_conversation),
+        ],
+        per_message=True,
+        name="join_conversation"
     )
     application.add_handler(join_conv)
     
@@ -219,7 +222,8 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", mode_handlers.cancel_conversation)],
-        per_message=True
+        per_message=True,
+        name="mode_conversation"
     )
     application.add_handler(mode_conv)
     
@@ -238,7 +242,8 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", reaction_handlers.cancel_conversation)],
-        per_message=True
+        per_message=True,
+        name="reaction_conversation"
     )
     application.add_handler(reaction_conv)
     
@@ -254,7 +259,8 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", views_handlers.cancel_conversation)],
-        per_message=True
+        per_message=True,
+        name="views_conversation"
     )
     application.add_handler(views_conv)
     
