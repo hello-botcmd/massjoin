@@ -25,6 +25,13 @@ async def account_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel ongoing conversation"""
+    await update.message.reply_text(
+        "❌ Operation cancelled."
+    )
+    return ConversationHandler.END
+
 async def single_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start single account addition"""
     query = update.callback_query
@@ -219,10 +226,3 @@ async def bulk_add_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Please check the session string and try again."
         )
         return BULK_ADD_SESSION
-
-async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel ongoing conversation"""
-    await update.message.reply_text(
-        "❌ Operation cancelled."
-    )
-    return ConversationHandler.END
