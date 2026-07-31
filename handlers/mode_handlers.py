@@ -5,7 +5,12 @@ from handlers.utils import get_client_for_account, update_status, set_privacy, s
 import asyncio
 import random
 from telethon import functions, types
-
+async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel ongoing conversation"""
+    await update.message.reply_text(
+        "❌ Operation cancelled."
+    )
+    return ConversationHandler.END
 # Conversation states
 (MODE_COUNT1, MODE_COUNT2, MODE_COUNT3) = range(3)
 
