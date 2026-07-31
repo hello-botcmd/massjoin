@@ -241,7 +241,7 @@ def main():
     # Add callback handler
     application.add_handler(CallbackQueryHandler(handle_callback))
     
-    # Add conversation handlers
+    # Add conversation handlers with per_message=True to avoid warnings
     # Account handlers
     account_conv = ConversationHandler(
         entry_points=[
@@ -262,7 +262,8 @@ def main():
         fallbacks=[
             CommandHandler("stop", account_handlers.cancel_conversation),
             CommandHandler("cancel", account_handlers.cancel_conversation),
-        ]
+        ],
+        per_message=True
     )
     application.add_handler(account_conv)
     
@@ -283,7 +284,8 @@ def main():
         fallbacks=[
             CommandHandler("stop", join_handlers.cancel_conversation),
             CommandHandler("cancel", join_handlers.cancel_conversation),
-        ]
+        ],
+        per_message=True
     )
     application.add_handler(join_conv)
     
@@ -304,7 +306,8 @@ def main():
         fallbacks=[
             CommandHandler("stop", mode_handlers.cancel_conversation),
             CommandHandler("cancel", mode_handlers.cancel_conversation),
-        ]
+        ],
+        per_message=True
     )
     application.add_handler(mode_conv)
     
@@ -325,7 +328,8 @@ def main():
         fallbacks=[
             CommandHandler("stop", reaction_handlers.cancel_conversation),
             CommandHandler("cancel", reaction_handlers.cancel_conversation),
-        ]
+        ],
+        per_message=True
     )
     application.add_handler(reaction_conv)
     
@@ -343,7 +347,8 @@ def main():
         fallbacks=[
             CommandHandler("stop", views_handlers.cancel_conversation),
             CommandHandler("cancel", views_handlers.cancel_conversation),
-        ]
+        ],
+        per_message=True
     )
     application.add_handler(views_conv)
     
