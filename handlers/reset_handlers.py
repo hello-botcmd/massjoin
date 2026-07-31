@@ -2,8 +2,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from database import db
 from client_manager import client_manager
-from handlers.utils import set_last_seen_privacy
-from handlers.mode_handlers import stop_account_mode  # kill lingering loops
+from handlers.utils import (
+    set_last_seen_privacy, verify_last_seen_visible
+)
+from handlers.mode_handlers import stop_account_mode
 from telethon import functions
 import asyncio
 import logging
@@ -25,13 +27,13 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for acc in accounts:
         account_id = str(acc.get("_id", acc.get("phone")))
 
-        # 1) Stop any running mode loop first, or it will reconnect
+        # 1) Stop any running mode loop first, or it reconnects
         try:
             await stop_account_mode(acc)
         except Exception as e:
             logger.warning(f"stop mode {account_id}: {e}")
 
-        # 2) Now reset privacy + go offline on a clean connection.
+        # 2) UNHIDE (both keys) -> verify -> go offline.
         client = None
         try:
             client = await client_manager.get_or_create_client(
@@ -39,8 +41,14 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not client:
                 failed += 1
                 continue
+
             if not await set_last_seen_privacy(client, show_last_seen=True):
                 raise RuntimeError("setPrivacy failed")
+
+            if not await verify_last_seen_visible(client, account_id):
+                raise RuntimeError("privacy verify failed (still hidden)")
+
+            # The offline ping stamps "last seen x time ago"
             await client(functions.account.UpdateStatusRequest(offline=True))
             success += 1
         except Exception as e:
@@ -50,7 +58,6 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client_manager.disconnect_client(account_id)
         await asyncio.sleep(0.5)
 
-    # Update DB – align keys with the rest of the codebase
     await db.update_many_accounts({}, {
         "current_mode": 0,
         "is_hidden": False,
