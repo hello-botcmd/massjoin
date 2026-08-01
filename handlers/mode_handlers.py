@@ -1,11 +1,11 @@
-import asyncio
+            import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
 from client_manager import client_manager
 from handlers.utils import (
-    set_last_seen_privacy, update_status,
+    set_last_seen_privacy, set_online_status,
     get_stop_event, parse_mode_counts, distribute_accounts
 )
 from telethon import functions
@@ -83,6 +83,7 @@ async def stop_account_mode(account):
             await task
         except (asyncio.CancelledError, Exception):
             pass
+    # Purge client cache
     try:
         await client_manager.disconnect_client(account_id)
     except Exception:
@@ -99,7 +100,6 @@ async def apply_mode_to_account(account, mode):
     session_string = account.get("session_string")
 
     try:
-        # Stop any previous mode
         await stop_account_mode(account)
 
         if mode in (1, 2):
@@ -108,12 +108,13 @@ async def apply_mode_to_account(account, mode):
                 await db.update_account(account_id, {"status": "disconnected"})
                 return f"❌ {phone}: session invalid"
 
-            # Unhide last seen
+            # Unhide with robust privacy setter
             if not await set_last_seen_privacy(client, show_last_seen=True):
                 await client_manager.disconnect_client(account_id)
                 return f"❌ {phone}: failed to unhide"
 
-            await client(functions.account.UpdateStatusRequest(offline=False))
+            await asyncio.sleep(0.5)
+            await set_online_status(client, offline=False)
 
             await db.update_account(account_id, {
                 "status": "active",
@@ -134,12 +135,13 @@ async def apply_mode_to_account(account, mode):
                 await db.update_account(account_id, {"status": "disconnected"})
                 return f"❌ {phone}: session invalid"
 
-            # Hide last seen
+            # Hide with robust privacy setter
             if not await set_last_seen_privacy(client, show_last_seen=False):
                 await client_manager.disconnect_client(account_id)
                 return f"❌ {phone}: failed to hide"
 
-            await client(functions.account.UpdateStatusRequest(offline=False))
+            await asyncio.sleep(0.5)
+            await set_online_status(client, offline=False)
             await client_manager.disconnect_client(account_id)
 
             await db.update_account(account_id, {
@@ -169,16 +171,16 @@ async def _online_loop(account, mode):
                 if ev.is_set():
                     break
             client = await client_manager.get_client(account_id)
-            if not client:
+            if not client or not client.is_connected():
                 client = await client_manager.get_or_create_client(account.get("session_string"), account_id)
-                if not client:
+                if not client or not client.is_connected():
                     await asyncio.sleep(5)
                     continue
             try:
-                await client(functions.account.UpdateStatusRequest(offline=False))
+                await set_online_status(client, offline=False)
                 if mode == 2:
                     await asyncio.sleep(120)
-                    await client(functions.account.UpdateStatusRequest(offline=True))
+                    await set_online_status(client, offline=True)
                     await client_manager.disconnect_client(account_id)
                     break
                 else:
