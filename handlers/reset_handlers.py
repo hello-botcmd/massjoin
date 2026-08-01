@@ -2,9 +2,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from database import db
 from client_manager import client_manager
-from handlers.utils import set_last_seen_privacy
+from handlers.utils import set_last_seen_privacy, set_online_status
 from handlers.mode_handlers import stop_account_mode
-from telethon import functions
 import asyncio
 import logging
 
@@ -38,7 +37,8 @@ async def reset_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 continue
             if not await set_last_seen_privacy(client, show_last_seen=True):
                 raise RuntimeError("setPrivacy failed")
-            await client(functions.account.UpdateStatusRequest(offline=True))
+            await asyncio.sleep(0.5)
+            await set_online_status(client, offline=True)  # show "last seen just now"
             success += 1
         except Exception as e:
             logger.error(f"reset {account_id}: {e}")
