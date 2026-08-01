@@ -1,4 +1,4 @@
-import logging
+    import logging
 import warnings
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -41,18 +41,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Handle only the callbacks that are NOT part of conversation handlers.
-    Conversation handlers (join, mode, reaction, views) are handled separately.
-    """
     query = update.callback_query
     data = query.data
 
+    # Only handle direct actions, not conversation entry points
     if data == "main_menu":
         await start(update, context)
         return
 
-    # These are handled directly (no conversation)
     if data == "add_account":
         await account_handlers.account_button(update, context)
     elif data == "total":
@@ -62,9 +58,7 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif data == "reset":
         await reset_handlers.reset_button(update, context)
     else:
-        # For join, mode, reaction, views – do nothing here,
-        # the conversation handlers will process them.
-        # Just acknowledge to avoid "callback query expired" warning.
+        # For join, mode, reaction, views – let conversation handlers handle
         await query.answer()
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,7 +66,6 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in ALLOWED_USERS:
         await update.message.reply_text("⛔ Unauthorized.")
         return
-    # Set stop event for all active operations
     from handlers.utils import set_stop_event
     set_stop_event(user_id)
     context.user_data.clear()
@@ -107,11 +100,9 @@ def main():
     app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(CommandHandler("cancel", account_handlers.cancel_conversation))
 
-    # ---- Conversation handlers (must be added BEFORE the main callback handler) ----
-    # Account (single/bulk add)
+    # ---- Conversation handlers (must be added BEFORE main callback) ----
     app.add_handler(account_handlers.get_add_account_handler())
 
-    # Join
     join_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(join_handlers.join_entry, pattern="^join$")],
         states={
@@ -130,7 +121,6 @@ def main():
     )
     app.add_handler(join_conv)
 
-    # Mode
     mode_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(mode_handlers.mode_button, pattern="^mode$")],
         states={
@@ -143,7 +133,6 @@ def main():
     )
     app.add_handler(mode_conv)
 
-    # Reaction
     reaction_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(reaction_handlers.reaction_button, pattern="^reaction$")],
         states={
@@ -162,7 +151,6 @@ def main():
     )
     app.add_handler(reaction_conv)
 
-    # Views
     views_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(views_handlers.views_button, pattern="^views$")],
         states={
@@ -178,11 +166,9 @@ def main():
     )
     app.add_handler(views_conv)
 
-    # ---- Main callback handler (handles only non‑conversation callbacks) ----
-    # This must be added AFTER all conversation handlers so they get priority.
+    # ---- Main callback handler (only for non-conversation) ----
     app.add_handler(CallbackQueryHandler(main_menu_callback))
 
-    # ---- Error handler ----
     app.add_error_handler(error_handler)
 
     logger.info("Bot started...")
